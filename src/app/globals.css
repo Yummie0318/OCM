@@ -1,0 +1,580 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: #f4f5f7;
+    color: #1a1a1a;
+  }
+
+  .page {
+    max-width: 1300px;
+    margin: 0 auto;
+    padding: 16px 16px 88px; /* bottom padding reserves space for the fixed footer */
+  }
+
+  .page-header h1 {
+    margin: 0 0 4px 0;
+    font-size: 1.35rem;
+  }
+
+  .page-header p {
+    margin: 0 0 14px 0;
+    color: #555;
+    font-size: 0.88rem;
+  }
+
+  /* Two-column layout: form on the left, map on the right */
+  .layout {
+    display: grid;
+    grid-template-columns: 1.1fr 0.9fr;
+    gap: 18px;
+    align-items: start;
+  }
+
+  .map-column {
+    position: sticky;
+    top: 12px;
+  }
+
+  .map-column h2 {
+    margin-top: 0;
+    font-size: 1rem;
+  }
+
+  .form-column {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    min-width: 0; /* prevents grid children from overflowing on small viewports */
+  }
+
+  .panel {
+    background: #fff;
+    border: 1px solid #e2e2e2;
+    border-radius: 8px;
+    padding: 14px 16px;
+  }
+
+  .panel h2 {
+    margin-top: 0;
+    margin-bottom: 6px;
+    font-size: 1rem;
+  }
+
+  .panel h3 {
+    font-size: 0.85rem;
+    margin: 12px 0 6px;
+    color: #333;
+  }
+
+  .hint {
+    font-size: 0.8rem;
+    color: #666;
+    margin: 4px 0 10px;
+  }
+
+  .hint.small {
+    font-size: 0.72rem;
+  }
+
+  .grid2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px 12px;
+  }
+
+  .grid3 {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 8px 12px;
+  }
+
+  label {
+    display: flex;
+    flex-direction: column;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #333;
+    gap: 3px;
+    margin-bottom: 6px;
+  }
+
+  input,
+  select {
+    font-size: 0.85rem;
+    padding: 5px 7px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-weight: 400;
+    width: 100%;
+  }
+
+  .lot-card {
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin-bottom: 12px;
+    background: #fafafa;
+  }
+
+  .lot-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+
+  /* Top row inside each lot card: compact stacked fields (left) + preview (right) */
+  .lot-top-row {
+    display: grid;
+    grid-template-columns: 1fr minmax(220px, 1fr);
+    gap: 14px;
+    align-items: stretch; /* preview box matches full height of the fields column */
+    margin-bottom: 10px;
+  }
+
+  .lot-fields-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .lot-fields-stack label {
+    margin-bottom: 6px;
+  }
+
+  /* Preview column: fills its grid track completely, no dead space */
+  .lot-top-row .lot-preview {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-width: 0; /* allows the box to shrink properly instead of overflowing */
+  }
+
+  .lot-top-row .shape-preview-empty,
+  .lot-top-row .shape-preview-svg {
+    width: 100%;
+    height: 100%;
+    flex: 1;
+  }
+
+  @media (max-width: 560px) {
+    .lot-top-row {
+      grid-template-columns: 1fr;
+    }
+  }
+  /* Corner rows as a grid (replaces the old <table>, which mis-sized columns) */
+  .corner-grid {
+    display: grid;
+    grid-template-columns: 46px 1fr 1fr 26px;
+    gap: 6px 8px;
+    align-items: center;
+    margin: 6px 0;
+  }
+
+  .corner-grid-head {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: #666;
+  }
+
+  .corner-grid input {
+    margin: 0; /* override label's default margin-bottom since these aren't inside <label> */
+  }
+
+  .corner-sta {
+    text-align: center;
+    padding-left: 4px;
+    padding-right: 4px;
+  }
+
+  .corner-remove {
+    display: flex;
+    justify-content: center;
+  }
+
+  @media (max-width: 400px) {
+    .corner-grid {
+      grid-template-columns: 40px 1fr 1fr 22px;
+      gap: 5px 5px;
+    }
+    .corner-grid-head {
+      font-size: 0.65rem;
+    }
+  }
+
+  button {
+    cursor: pointer;
+    font-size: 0.82rem;
+    padding: 7px 12px;
+    border-radius: 6px;
+    border: 1px solid #ccc;
+    background: #fff;
+  }
+
+  button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .btn-primary {
+    background: #2563eb;
+    color: #fff;
+    border: none;
+  }
+
+  .btn-secondary {
+    background: #eef2ff;
+    border: 1px solid #c7d2fe;
+  }
+
+  .btn-danger-small {
+    background: #fee2e2;
+    border: 1px solid #fca5a5;
+    color: #991b1b;
+    padding: 2px 7px;
+    font-size: 0.72rem;
+  }
+
+  .shape-preview-svg {
+    display: block;
+    border-radius: 8px;
+    border: 1px solid #ddd;
+    background: #fafafa;
+  }
+
+  .shape-preview-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 12px;
+    color: #888;
+    font-size: 0.8rem;
+    border-radius: 8px;
+    border: 1px dashed #ccc;
+    background: #fafafa;
+  }
+
+  .lot-preview {
+    margin-top: 0;
+  }
+
+  .lot-preview-label {
+    display: block;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: #666;
+    margin-bottom: 3px;
+  }
+
+  /* Fixed download footer */
+  .export-footer {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: #fff;
+    border-top: 1px solid #e2e2e2;
+    box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.06);
+    z-index: 50;
+  }
+
+  .export-footer-inner {
+    max-width: 1300px;
+    margin: 0 auto;
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .export-footer-status {
+    font-size: 0.82rem;
+    color: #333;
+  }
+
+  .export-footer-buttons {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .export-footer-buttons button {
+    background: #eef2ff;
+    border: 1px solid #c7d2fe;
+    padding: 7px 12px;
+    font-weight: 600;
+    font-size: 0.82rem;
+  }
+
+  .export-footer-buttons button.btn-primary {
+    background: #16a34a;
+    color: #fff;
+    border: none;
+  }
+
+  .export-footer-buttons button:disabled {
+    background: #f1f1f1;
+    border-color: #ddd;
+    color: #999;
+  }
+
+  /* Responsive breakpoints */
+  @media (max-width: 950px) {
+    .layout {
+      grid-template-columns: 1fr;
+    }
+    .map-column {
+      position: static;
+      order: -1; /* show map above the form on stacked/mobile layouts */
+    }
+  }
+
+  @media (max-width: 600px) {
+    .page {
+      padding: 12px 12px 150px;
+    }
+    .page-header h1 {
+      font-size: 1.15rem;
+    }
+    .grid2,
+    .grid3 {
+      grid-template-columns: 1fr;
+    }
+    .export-footer-inner {
+      flex-direction: column;
+      align-items: stretch;
+    }
+    .export-footer-status {
+      text-align: center;
+    }
+    .export-footer-buttons {
+      justify-content: stretch;
+    }
+    .export-footer-buttons button {
+      flex: 1;
+    }
+  }
+
+  /* --- Control point search picker --- */
+  .cp-picker {
+    position: relative;
+    margin-bottom: 10px;
+  }
+
+  .cp-picker-dropdown {
+    position: absolute;
+    z-index: 20;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
+    max-height: 280px;
+    overflow-y: auto;
+    margin-top: 2px;
+  }
+
+  .cp-picker-item {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    width: 100%;
+    text-align: left;
+    padding: 8px 12px;
+    border: none;
+    border-bottom: 1px solid #f0f0f0;
+    background: #fff;
+    cursor: pointer;
+    border-radius: 0;
+  }
+
+  .cp-picker-item:hover {
+    background: #eef2ff;
+  }
+
+  .cp-picker-item strong {
+    font-size: 0.85rem;
+  }
+
+  .cp-picker-item span {
+    font-size: 0.75rem;
+    color: #666;
+  }
+
+  .cp-picker-msg {
+    padding: 10px 12px;
+    font-size: 0.8rem;
+    color: #888;
+  }
+
+  .cp-picker-error {
+    color: #b91c1c;
+  }
+
+  /* --- Selected tie point summary + collapsible manual entry --- */
+  .cp-summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 12px;
+    background: #f0fdf4;
+    border: 1px solid #bbf7d0;
+    border-radius: 6px;
+    margin-bottom: 10px;
+  }
+
+  .cp-summary-sub {
+    display: block;
+    font-size: 0.75rem;
+    color: #555;
+    font-weight: 400;
+  }
+
+  .cp-manual {
+    border-top: 1px dashed #e2e2e2;
+    padding-top: 8px;
+  }
+
+  /* --- Save to Database modal --- */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 16px;
+  }
+
+  .modal-card {
+    background: #fff;
+    border: 1px solid #e2e2e2;
+    border-radius: 8px;
+    padding: 18px 20px;
+    width: 380px;
+    max-width: 100%;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.18);
+  }
+
+  .modal-card h3 {
+    margin: 0 0 6px;
+    font-size: 1rem;
+  }
+
+  .modal-card label {
+    margin-top: 8px;
+  }
+
+  .modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 14px;
+  }
+
+  .modal-actions button {
+    padding: 7px 14px;
+  }
+
+  /* Duplicate lot list shown inside the save modal */
+  .cp-picker-error ul {
+    margin: 6px 0 0;
+    padding-left: 18px;
+    font-size: 0.78rem;
+  }
+
+  .cp-picker-error li {
+    margin-bottom: 2px;
+  }
+
+  .cp-picker-error p {
+    margin: 6px 0 0;
+    font-size: 0.8rem;
+  }
+
+  @media (max-width: 600px) {
+    .modal-card {
+      width: 100%;
+    }
+  }
+
+  /* --- "View on map" button overlaid on a ShapePreview --- */
+  .shape-preview-wrap {
+    position: relative;
+    height: 100%;
+    width: 100%;
+  }
+
+  .shape-preview-map-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 10;
+    background: #fff;
+    border: 1px solid #c7d2fe;
+    color: #1e3a8a;
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 5px 9px;
+    border-radius: 6px;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+  }
+
+  .shape-preview-map-btn:hover {
+    background: #eef2ff;
+  }
+
+  /* --- Map preview modal (opened from "View on map") --- */
+  .modal-card-map {
+    width: 680px;
+    max-width: 100%;
+    height: 560px;
+    display: flex;
+    flex-direction: column;
+    padding: 14px 16px;
+  }
+
+  .modal-card-map .modal-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+
+  .modal-card-map .modal-card-header h3 {
+    margin: 0;
+  }
+
+  .modal-card-map .map-modal-body {
+    flex: 1;
+    min-height: 0; /* lets the map fill remaining height instead of overflowing the card */
+    border-radius: 6px;
+    overflow: hidden;
+    border: 1px solid #e2e2e2;
+  }
+
+  @media (max-width: 600px) {
+    .modal-card-map {
+      width: 100%;
+      height: 80vh;
+    }
+  }
+}

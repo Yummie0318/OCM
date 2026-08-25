@@ -1,0 +1,193 @@
+// Target path in your project: src/app/api/lot-sheets/route.ts
+import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
+import { getPool } from "@/lib/db";
+import { AUTH_COOKIE_NAME, verifySession } from "@/lib/auth";
+
+// Shape of the JSON body the frontend should POST here. This is intentionally
+// decoupled from your existing `Lot`/`ComputedLot` types — map to this shape
+// in the save handler rather than sending your internal types directly.
+interface LotInput {
+  lotNo: string;
+  ownerGivenName?: string | null;
+  ownerSurname?: string | null;
+  provinceId?: number | null;
+  municipalityId?: number | null;
+  barangayId?: number | null;
+  surveyNo?: string | null;
+  dateSurveyed?: string | null; // "YYYY-MM-DD"
+  patentNo?: string | null;
+  remarks?: string | null;
+  surveyorId?: number | null;
+  areaSqm?: number | null;
+  geojson?: unknown; // computed GeoJSON Feature for this lot
+}
+
+interface LotSheetInput {
+  sheetNo: string; // e.g. "8208"
+  controlPointId?: number | null; // FK -> control_points.id (replaces tiePointName/provinceId/municipalityId)
+  lpcsNorthing?: number | null;
+  lpcsEasting?: number | null;
+  ppcsNorthing?: number | null;
+  ppcsEasting?: number | null;
+  zone?: number | null;
+  planUrl?: string | null;
+  lots: LotInput[];
+}
+
+export async function POST(request: Request) {
+  // Who's making this request. middleware.ts already requires a valid
+  // session cookie to reach this route at all (it's not in PUBLIC_PATHS),
+  // so this should never actually be null in practice -- but middleware
+  // and route handlers run independently, so we still check here rather
+  // than trust that upstream check blindly.
+  const cookieStore = await cookies();
+  const token = cookieStore.get(AUTH_COOKIE_NAME)?.value;
+  const session = token ? await verifySession(token) : null;
+
+  if (!session) {
+    return NextResponse.json({ error: "Not authenticated." }, { status: 401 });
+  }
+
+  let body: LotSheetInput;
+  try {
+    body = (await request.json()) as LotSheetInput;
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
+  }
+
+  if (!body.sheetNo || !body.lots || body.lots.length === 0) {
+    return NextResponse.json(
+      { error: "sheetNo and at least one lot are required." },
+      { status: 400 }
+    );
+  }
+
+  const pool = getPool();
+  const client = await pool.connect();
+
+  try {
+    // --- Duplicate check: same lot_no + survey_no already in the DB ---
+    const lotNos = body.lots.map((l) => l.lotNo);
+    const surveyNos = body.lots.map((l) => l.surveyNo ?? "");
+
+    const dupCheck = await client.query(
+      `SELECT lot_no, survey_no
+       FROM lots
+       WHERE (lot_no, COALESCE(survey_no, '')) IN (
+         SELECT * FROM UNNEST($1::text[], $2::text[])
+       )`,
+      [lotNos, surveyNos]
+    );
+
+    if (dupCheck.rows.length > 0) {
+      return NextResponse.json(
+        {
+          error:
+            "One or more lots already exist in the database (same Lot No. and Survey No.).",
+          duplicates: dupCheck.rows.map((r) => ({
+            lotNo: r.lot_no,
+            surveyNo: r.survey_no,
+          })),
+        },
+        { status: 409 }
+      );
+    }
+
+    await client.query("BEGIN");
+
+    const sheetResult = await client.query(
+      `INSERT INTO lot_sheets
+        (sheet_no, control_point_id,
+         lpcs_northing, lpcs_easting, ppcs_northing, ppcs_easting, zone, plan_url,
+         created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       RETURNING id`,
+      [
+        body.sheetNo,
+        body.controlPointId ?? null,
+        body.lpcsNorthing ?? null,
+        body.lpcsEasting ?? null,
+        body.ppcsNorthing ?? null,
+        body.ppcsEasting ?? null,
+        body.zone ?? null,
+        body.planUrl ?? null,
+        session.userId,
+      ]
+    );
+    const lotSheetId = sheetResult.rows[0].id;
+
+    const insertedLots = [];
+    for (const lot of body.lots) {
+      const geojsonStr = lot.geojson ? JSON.stringify(lot.geojson) : null;
+      const lotResult = await client.query(
+        `INSERT INTO lots
+          (lot_sheet_id, lot_no, owner_given_name, owner_surname,
+           province_id, municipality_id, barangay_id,
+           survey_no, date_surveyed, patent_no, remarks,
+           surveyor_id, area_sqm, geojson, geom)
+         VALUES (
+           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
+           CASE WHEN $14::jsonb IS NULL THEN NULL
+                ELSE ST_SetSRID(ST_GeomFromGeoJSON($14::jsonb->'geometry'), 4326)
+           END
+         )
+         RETURNING id, lot_no`,
+        [
+          lotSheetId,
+          lot.lotNo,
+          lot.ownerGivenName ?? null,
+          lot.ownerSurname ?? null,
+          lot.provinceId ?? null,
+          lot.municipalityId ?? null,
+          lot.barangayId ?? null,
+          lot.surveyNo ?? null,
+          lot.dateSurveyed ?? null,
+          lot.patentNo ?? null,
+          lot.remarks ?? null,
+          lot.surveyorId ?? null,
+          lot.areaSqm ?? null,
+          geojsonStr,
+        ]
+      );
+      insertedLots.push(lotResult.rows[0]);
+    }
+
+    await client.query("COMMIT");
+
+    return NextResponse.json(
+      { id: lotSheetId, sheetNo: body.sheetNo, lots: insertedLots },
+      { status: 201 }
+    );
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("Failed to save lot sheet:", err);
+    return NextResponse.json(
+      { error: "Failed to save lot sheet." },
+      { status: 500 }
+    );
+  } finally {
+    client.release();
+  }
+}
+
+// Used later by the "view all saved lots" page: a summary list of sheets.
+export async function GET() {
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `SELECT
+        ls.id, ls.sheet_no, ls.plan_url, ls.created_at,
+        cp.tie_point_name, cp.province_name, cp.municipality_name,
+        COUNT(l.id) AS lot_count,
+        u.username AS created_by_username
+     FROM lot_sheets ls
+     LEFT JOIN control_points cp ON cp.id = ls.control_point_id
+     LEFT JOIN lots l ON l.lot_sheet_id = ls.id
+     LEFT JOIN users u ON u.id = ls.created_by
+     GROUP BY ls.id, ls.sheet_no, ls.plan_url, ls.created_at,
+              cp.tie_point_name, cp.province_name, cp.municipality_name,
+              u.username
+     ORDER BY ls.created_at DESC`
+  );
+  return NextResponse.json(rows);
+}
