@@ -32,6 +32,11 @@ export function computedLotToFeature(lot: ComputedLot): LotFeature {
       surveyNo: null,
       dateSurveyed: null,
       surveyor: null,
+      // Preview features are built client-side before the lot sheet is
+      // ever saved to the DB, so there's no real lot_sheets.id yet --
+      // null here matches the "not saved yet" state, same as the other
+      // not-yet-known fields above.
+      sheetId: null,
       sheetNo: null,
       patentNo: null,
       remarks: null,
