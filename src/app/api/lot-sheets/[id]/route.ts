@@ -4,8 +4,9 @@ import { getPool } from "@/lib/db";
 
 export async function GET(
   _request: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params;
   const pool = getPool();
 
   const sheetResult = await pool.query(
@@ -15,7 +16,7 @@ export async function GET(
      LEFT JOIN control_points cp ON cp.id = ls.control_point_id
      LEFT JOIN users u ON u.id = ls.created_by
      WHERE ls.id = $1`,
-    [params.id]
+    [id]
   );
 
   if (sheetResult.rows.length === 0) {
@@ -32,7 +33,7 @@ export async function GET(
      LEFT JOIN surveyors s ON s.id = l.surveyor_id
      WHERE l.lot_sheet_id = $1
      ORDER BY l.lot_no`,
-    [params.id]
+    [id]
   );
 
   return NextResponse.json({
