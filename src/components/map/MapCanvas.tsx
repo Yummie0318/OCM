@@ -2,7 +2,19 @@
 
 // Target path: src/components/map/MapCanvas.tsx
 //
-// POPUP NO LONGER AUTO-OPENS THE DETAIL PANEL (this pass): clicking a lot
+// TABLE-ROW ZOOM (this pass): AttributeTable row clicks now also zoom the
+// map to that lot's polygon. Wired via a new `focusFeature` prop — an
+// object carrying the clicked LotFeature plus a `token` (a value that
+// changes on every click, even re-clicks of the same lot) so the effect
+// below always re-fires. This is deliberately separate from the existing
+// `focusPoint` prop: focusPoint is a bare lng/lat used for search-select
+// fly-tos before a full polygon has loaded, whereas focusFeature already
+// has geometry in hand and fits the map to its actual bounds (same
+// fitBounds shape used for the "fit to all features" path in
+// setFeatures()), which reads better for "zoom to this one lot" than a
+// flyTo-to-centroid would.
+//
+// POPUP NO LONGER AUTO-OPENS THE DETAIL PANEL (earlier pass): clicking a lot
 // polygon used to do two things at once — show the themed popup card AND
 // call `onFeatureClick`, which opens LotDetailPanel. That's now split:
 // the click only opens the popup. Opening the detail panel is a
@@ -97,6 +109,16 @@ interface FocusPoint {
   zoom?: number;
 }
 
+// A request to fit the map to a single lot's polygon bounds — used when a
+// row is selected in AttributeTable. `token` should be a fresh value
+// (e.g. Date.now()) on every request so the effect below re-fires even
+// when the same lot is clicked twice in a row (same `feature` object /
+// same id wouldn't otherwise register as a new dependency).
+interface FocusFeatureRequest {
+  feature: LotFeature;
+  token: number;
+}
+
 // Identifiers for the basemap options the user can switch between. Kept
 // as a union (not a plain string) so page.tsx gets autocomplete/type
 // safety when reading/writing the persisted choice.
@@ -106,6 +128,10 @@ interface Props {
   features: LotFeature[];
   selectedId?: number | string | null;
   focusPoint?: FocusPoint | null;
+  // Fit the map to a specific lot's polygon bounds — set this when a row
+  // is selected from AttributeTable so the map zooms to match. Optional;
+  // callers that don't need this (e.g. simpler embeds) can omit it.
+  focusFeature?: FocusFeatureRequest | null;
   onFeatureClick?: (feature: LotFeature) => void;
   // Map of lot id (stringified) -> hex color. Owned by the page (lifted up
   // from AttributeTable's color-selection toolbar). Optional so MapCanvas
@@ -378,6 +404,7 @@ export default function MapCanvas({
   features,
   selectedId,
   focusPoint,
+  focusFeature,
   onFeatureClick,
   lotColors,
   basemapId = "light",
@@ -678,8 +705,8 @@ export default function MapCanvas({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lotColors]);
 
-  // Highlight whichever lot is currently selected (e.g. via search or a
-  // map click).
+  // Highlight whichever lot is currently selected (e.g. via search, a map
+  // click, or a table row click).
   useEffect(() => {
     applyHighlight(selectedId ?? null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -697,6 +724,43 @@ export default function MapCanvas({
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusPoint]);
+
+  // Fit the map to a single lot's polygon bounds — used when a row is
+  // selected in AttributeTable, so clicking a lot in the table zooms the
+  // map to it the same way clicking it directly on the map (or via
+  // search) already centers things. Depends on the whole `focusFeature`
+  // object (not just, say, its id) so a fresh `token` on every click
+  // re-triggers the fit even when the same lot is clicked twice in a row.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !loadedRef.current || !focusFeature) return;
+
+    const { feature } = focusFeature;
+    let minLng = Infinity,
+      minLat = Infinity,
+      maxLng = -Infinity,
+      maxLat = -Infinity;
+
+    for (const ring of feature.geometry.coordinates) {
+      for (const [lng, lat] of ring) {
+        if (lng < minLng) minLng = lng;
+        if (lng > maxLng) maxLng = lng;
+        if (lat < minLat) minLat = lat;
+        if (lat > maxLat) maxLat = lat;
+      }
+    }
+
+    if (minLng <= maxLng && minLat <= maxLat) {
+      map.fitBounds(
+        [
+          [minLng, minLat],
+          [maxLng, maxLat],
+        ],
+        { padding: 80, maxZoom: 19, duration: 500 }
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusFeature]);
 
   // Swap the "basemap" raster source's tile URLs whenever the user picks a
   // different basemap. Deliberately NOT map.setStyle() — see the file-top

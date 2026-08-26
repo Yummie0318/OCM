@@ -2,25 +2,35 @@
 
 // Target path: src/app/map/page.tsx
 //
-// AUTH WIRING (this pass): the sidebar used to always show the hardcoded
+// TABLE ROW CLICK NOW ZOOMS THE MAP + REFRESHES AN OPEN DETAIL PANEL
+// (this pass): clicking a row in AttributeTable highlights the row/
+// polygon (via `selectedId`, as before) and now additionally (a) fires a
+// `focusFeature` request at MapCanvas so the map fits/zooms to that lot's
+// polygon bounds, and (b) updates `selectedFeature` so an already-open
+// detail panel swaps to show this lot's preview/coordinates instead.
+//
+// Whether the panel is actually ON SCREEN is governed by a separate
+// `detailPanelOpen` boolean, not by `selectedFeature` being non-null.
+// `openFeature` (map click's "View Lot Details" popup button, or a
+// search select) is the only thing that sets it true; the panel's own
+// close button (`closeDetail`) is the only thing that sets it false. A
+// table row click deliberately never touches `detailPanelOpen`: if the
+// panel is already open it now shows a different lot, but a row click
+// can never pop a closed panel open, and can never close one that's
+// already showing. See the `feature={detailPanelOpen ? selectedFeature
+// : null}` line on <LotDetailPanel /> below for where this is enforced.
+//
+// `focusFeature` is a small piece of state — the clicked feature plus a
+// `token` (Date.now()) — passed straight through to MapCanvas, which
+// does the actual fitBounds work (see its file-top comment).
+//
+// AUTH WIRING (earlier pass): the sidebar used to always show the hardcoded
 // "Admin User" / "admin@example.com" defaults from Sidebar.tsx's props.
 // This page now fetches the real logged-in user from GET /api/auth/me on
 // mount and passes userName/userEmail/userType down to both <Sidebar />
 // instances (mobile + desktop). handleLogout also actually calls
 // POST /api/auth/logout (clearing the session cookie) and redirects to
 // "/" (the login page) instead of just console.log-ing.
-//
-// TABLE CLICK NO LONGER OPENS THE DETAIL PANEL (earlier pass): clicking a
-// row in the AttributeTable used to call `openFeature`, the same handler
-// the map's polygon click uses — so it both highlighted the lot AND
-// popped open the LotDetailPanel. That's now split: `openFeature` (sets
-// both selectedId + selectedFeature) is reserved for the map click, and a
-// new `selectFeatureFromTable` (sets only selectedId) is passed to
-// AttributeTable's `onRowClick` instead. The row still highlights and the
-// polygon still highlights on the map (both keyed off `selectedId`), but
-// `selectedFeature` — the thing that actually makes LotDetailPanel render
-// — never gets touched from a table click. Nothing else about the table
-// or the panel changed.
 //
 // TOUCH RESIZE (earlier pass): the table's resize handle (and, for
 // consistency, the sidebar and detail-panel handles too) previously only
@@ -181,6 +191,23 @@ function MapViewerPageInner() {
 
   const [selectedId, setSelectedId] = useState<number | string | null>(null);
   const [selectedFeature, setSelectedFeature] = useState<LotFeature | null>(null);
+
+  // Whether LotDetailPanel is actually visible. Deliberately separate from
+  // `selectedFeature` (which is just "what data would the panel show if it
+  // were open"): the panel should only ever open via a deliberate action
+  // (clicking a polygon's "View Lot Details" popup button, or a search
+  // select) and only ever close via the user hitting its own close button
+  // — a table row click should be able to swap what's INSIDE an already-
+  // open panel without either opening a closed one or closing an open one.
+
+  // A request to fit/zoom the map to a single lot's polygon bounds,
+  // fired whenever a row is selected from AttributeTable. `token` is a
+  // fresh value on every click (even re-clicks of the same lot) so
+  // MapCanvas's effect always re-fires. null when there's nothing to
+  // focus (e.g. right after mount).
+  const [focusFeature, setFocusFeature] = useState<{ feature: LotFeature; token: number } | null>(null);
+
+  const [detailPanelOpen, setDetailPanelOpen] = useState(false);
 
   const [tableFilterKey, setTableFilterKey] = useState<string | null>(null);
 
@@ -494,24 +521,39 @@ function MapViewerPageInner() {
     }
   }, [tableFilterKey, activeSelections]);
 
-  // Map click (and search select, via handleSearchSelect below): highlights
-  // the lot AND opens the detail panel.
+  // Map click flow: a click on a polygon just opens the themed popup (see
+  // MapCanvas); this is only called when the user then clicks that
+  // popup's "View Lot Details" button, or selects a search result. It
+  // highlights the lot, loads it into the panel, AND deliberately opens
+  // the panel — this is the one and only "open" action.
   function openFeature(feature: LotFeature) {
     setSelectedId(feature.id);
     setSelectedFeature(feature);
+    setDetailPanelOpen(true);
     if (isMobile) setMobileOpen(false);
   }
 
   // Attribute table row click: highlights the row (and, since MapCanvas
-  // highlights off the same selectedId, the polygon on the map) WITHOUT
-  // opening the detail panel. Deliberately does not touch selectedFeature
-  // — that's the only thing LotDetailPanel checks to decide whether to
-  // render, so leaving it alone is all this needs to do.
+  // highlights off the same selectedId, the polygon on the map),
+  // fires a focusFeature request so the map zooms to that lot's polygon
+  // bounds, and updates `selectedFeature` so the detail panel's content
+  // reflects this lot. Deliberately does NOT touch `detailPanelOpen`: if
+  // the panel is already open it swaps to show this lot, but a row click
+  // never opens a closed panel and never closes an open one — only the
+  // panel's own close button (see closeDetail) or a "View Lot Details"
+  // click (see openFeature) change whether it's showing at all.
   function selectFeatureFromTable(feature: LotFeature) {
     setSelectedId(feature.id);
+    setSelectedFeature(feature);
+    setFocusFeature({ feature, token: Date.now() });
   }
 
+  // The panel's own close button. This is the only place detailPanelOpen
+  // is ever set back to false (aside from the "selection vanished
+  // underneath us" effect below), so the panel only ever closes when the
+  // user deliberately closes it.
   function closeDetail() {
+    setDetailPanelOpen(false);
     setSelectedId(null);
     setSelectedFeature(null);
   }
@@ -657,6 +699,7 @@ async function handleLogout() {
     if (!stillVisible) {
       setSelectedId(null);
       setSelectedFeature(null);
+      setDetailPanelOpen(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allFeatures, isLoading]);
@@ -810,6 +853,7 @@ async function handleLogout() {
             features={allFeatures}
             selectedId={selectedId}
             focusPoint={null}
+            focusFeature={focusFeature}
             onFeatureClick={openFeature}
             lotColors={lotColors}
             basemapId={basemapId}
@@ -887,9 +931,15 @@ async function handleLogout() {
             </div>
           )}
           {/* width/isResizing/onStartResize wire the panel into the
-              same drag pattern as the sidebar and table. */}
+              same drag pattern as the sidebar and table. `feature` is
+              gated on `detailPanelOpen` — not just `selectedFeature` —
+              so a table row click (which updates selectedFeature but
+              leaves detailPanelOpen untouched) can silently refresh the
+              panel's content while it's open, without ever opening it
+              from closed. LotDetailPanel itself already renders nothing
+              when `feature` is null (see its own file). */}
           <LotDetailPanel
-            feature={selectedFeature}
+            feature={detailPanelOpen ? selectedFeature : null}
             onClose={closeDetail}
             width={detailPanelWidth}
             isResizing={isDetailPanelResizing}

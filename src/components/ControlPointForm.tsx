@@ -44,6 +44,14 @@ export default function ControlPointForm({ value, onChange }: Props) {
 
   const hasSelection = value.tiePointName.trim().length > 0;
 
+  // LAMS sometimes exports a control point with no local (LPCS) value ever
+  // captured -- PPCS is still good, but corner Northing/Easting entered for
+  // lots using this point are already real-world PPCS-scale numbers, not
+  // offsets from a local origin. computeLots.ts handles this at compute time
+  // (see effectiveControlPoint / hasNoLocalOffset); this banner just makes
+  // that behavior visible so it isn't mistaken for missing/bad data.
+  const hasNoLocalOffset = value.lpcsNorthing === 0 && value.lpcsEasting === 0;
+
   return (
     <section
       className="flex flex-col gap-3 rounded-[14px] p-4"
@@ -129,6 +137,17 @@ export default function ControlPointForm({ value, onChange }: Props) {
               <input className={inputCls} type="number" step="any" value={value.ppcsEasting} onChange={(e) => update("ppcsEasting", Number(e.target.value))} />
             </label>
           </div>
+
+          {hasNoLocalOffset && (
+            <div
+              className="rounded-[8px] px-2.5 py-2 text-[11px] font-medium leading-snug"
+              style={{ background: "var(--sb-accent-bg)", color: "var(--sb-accent-text)" }}
+            >
+              No local (LPCS) value recorded for this control point. Corner Northing/Easting
+              entered for lots using this point will be treated as real-world PPCS coordinates
+              directly — no shift is applied.
+            </div>
+          )}
         </div>
       )}
     </section>
