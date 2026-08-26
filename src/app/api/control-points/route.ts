@@ -17,6 +17,15 @@ export interface ControlPointRow {
   lon_sec: number | null;
 }
 
+// Cap on rows returned per search. Was 25, which was too tight for a
+// single-municipality search once that municipality has more than 25 tie
+// points (e.g. Claveria's 44 records only partly showed up). Raised to
+// 100 -- the picker's dropdown already scrolls (max-h-56 overflow-y-auto
+// in ControlPointPicker.tsx), so a taller cap is safe there; this still
+// guards against a very broad query (e.g. a single letter) dumping the
+// full ~1900-row table.
+const SEARCH_LIMIT = 100;
+
 export async function GET(req: NextRequest) {
   const q = (req.nextUrl.searchParams.get("q") || "").trim();
 
@@ -38,7 +47,7 @@ export async function GET(req: NextRequest) {
           OR municipality_name ILIKE $1
           OR province_name ILIKE $1
        ORDER BY municipality_name, tie_point_name
-       LIMIT 25`,
+       LIMIT ${SEARCH_LIMIT}`,
       [like]
     );
     return NextResponse.json({ rows });
