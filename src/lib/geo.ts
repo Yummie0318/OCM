@@ -35,6 +35,11 @@ export interface LotFeature {
     patentNo: string | null;
     remarks: string | null;
     planUrl: string | null;
+    // Username of the user who encoded this lot's sheet (lot_sheets.created_by
+    // -> users.username). Captured per-sheet, not per-lot, so every lot on
+    // the same sheet shows the same encoder. Null for sheets saved before
+    // created_by was tracked, or if the user account was later removed.
+    encodedBy: string | null;
   };
 }
 

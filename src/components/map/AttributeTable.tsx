@@ -2,7 +2,30 @@
 
 // Target path: src/components/map/AttributeTable.tsx
 //
-// COMPACT HEADER (this pass): the breadcrumb row and the color-selection
+// ENCODED BY (this pass): moved from a per-lot column to a per-SHEET
+// display. "Encoded By" (properties.encodedBy, sourced from
+// lot_sheets.created_by -> users.username in /api/map/lots) is a fact
+// about the SHEET, not the lot — every lot on the same sheet has the same
+// value, since lots don't carry their own created_by column. Previously it
+// was rendered as a column on every lot row (repeating identically down
+// the table), which read like a per-lot attribute. It now shows up:
+//   - once per sheet, as the LAST column in SheetsTable (the sheets-list
+//     view), and
+//   - in the breadcrumb once you've drilled into a sheet ("Sheet {no} —
+//     {municipality}, {province} · Encoded by {username}").
+// It's no longer a column in LotsTable / LOT_COLUMNS. Search-by-encoder
+// still works exactly as before (matchesLotQuery still reads
+// p.encodedBy off each lot feature) — that's just how the underlying data
+// arrives per-feature; only the *display* location moved.
+//
+// SHEETS-ROW AFFORDANCE (this pass): the per-row "view lots" chevron
+// icon + themed Tooltip column has been removed. The whole row is still
+// the click target (onClick on the <tr>), and a plain native
+// `title="Click to view lots"` on the <tr> gives the hover tooltip
+// instead — one fewer column, simpler markup, same "click to drill in"
+// affordance.
+//
+// COMPACT HEADER (earlier pass): the breadcrumb row and the color-selection
 // toolbar used to be two separate conditionally-rendered bars stacked on
 // top of each other — and the color toolbar only mounted once something
 // was checked, so checking the first row inserted a whole new row and
@@ -54,10 +77,10 @@
 // Grouping key is sheetId (numeric FK), not sheetNo (display string) — two
 // sheets could in principle share a sheet_no, sheetId can't collide.
 //
-// Province/Municipality on the sheets view come from the first lot in each
-// group (all lots in a sheet share the same tie point, so they're the same
-// across the group) — see /api/map/lots, which derives them from the
-// sheet's control point.
+// Province/Municipality/Encoded By on the sheets view all come from the
+// first lot in each group (every lot in a sheet shares the same tie point
+// and encoder, so they're identical across the group) — see /api/map/lots,
+// which derives them from the sheet's control point / lot_sheets row.
 //
 // UX notes (earlier pass):
 // - There is now a SINGLE totals readout — the top SummaryBar — instead of
@@ -70,17 +93,19 @@
 //   the number on screen always matches what you're actually looking at.
 // - The breadcrumb no longer repeats the lot count/area (that's the top
 //   bar's job now) or the "Plan" link (already available per-row in the
-//   sheets list) — it's just "Sheet {no} — {municipality}, {province}".
+//   sheets list) — it's "Sheet {no} — {municipality}, {province}", plus
+//   the encoder (see ENCODED BY above).
 // - Search bar: searches the flat `features` list directly (lot no, owner,
-//   barangay, municipality, survey no, surveyor, patent no, remarks, and
-//   sheet no), so it finds lots across every sheet at once — not just
-//   whatever sheet you happen to be drilled into. It lives inline in the
-//   SummaryBar's row (via `rightSlot`) rather than its own full-width row,
-//   so it stays compact. While a query is active, the sheets/lots
-//   drill-down is bypassed in favor of a flat results table with a
-//   "Sheet No." column added back in (since results can span multiple
-//   sheets), and the top summary numbers switch to match-count/area.
-//   Clearing the query returns you to exactly the view you were on before.
+//   barangay, municipality, survey no, surveyor, patent no, remarks,
+//   encoded-by username, and sheet no), so it finds lots across every
+//   sheet at once — not just whatever sheet you happen to be drilled into.
+//   It lives inline in the SummaryBar's row (via `rightSlot`) rather than
+//   its own full-width row, so it stays compact. While a query is active,
+//   the sheets/lots drill-down is bypassed in favor of a flat results
+//   table with a "Sheet No." column added back in (since results can span
+//   multiple sheets), and the top summary numbers switch to
+//   match-count/area. Clearing the query returns you to exactly the view
+//   you were on before.
 //
 // - Color selection: in either lots view (a drilled-in sheet, or cross-
 //   sheet search results), each row has a checkbox and there's a "select
@@ -120,7 +145,7 @@ import type { LotFeature } from "@/lib/geo";
 import SummaryBar from "@/components/map/SummaryBar";
 import { useSidebarTheme } from "@/components/map/SidebarThemeContext";
 import { uiFont } from "@/components/map/sidebarTheme";
-import { Table2, X, ChevronLeft, ChevronRight, ExternalLink, Search, Palette, Check } from "lucide-react";
+import { Table2, X, ChevronLeft, ExternalLink, Search, Palette, Check } from "lucide-react";
 
 // Presets are a starting point, not a hard limit — the custom swatch (a
 // native color input) covers anything outside this set.
@@ -234,10 +259,20 @@ interface SheetGroup {
   planUrl: string | null;
   province: string | null;
   municipality: string | null;
+  // Sheet-level fact (lot_sheets.created_by -> users.username via
+  // /api/map/lots), taken from the first lot in the group since every lot
+  // on a sheet shares it. Displayed once per sheet (SheetsTable column +
+  // breadcrumb) instead of repeated on every lot row — see ENCODED BY note
+  // at the top of the file.
+  encodedBy: string | null;
   lots: LotFeature[];
   totalArea: number;
 }
 
+// "Encoded By" is intentionally NOT in this list — it's a sheet-level
+// fact, not a per-lot one. It's shown once per sheet instead (SheetsTable's
+// own "Encoded By" column, and the breadcrumb once drilled in) — see
+// ENCODED BY note at the top of the file.
 const LOT_COLUMNS = [
   "Lot No.",
   "Owner",
@@ -279,9 +314,12 @@ function formatDate(value: string | null | undefined): string {
 }
 
 // Checks a single lot against a lowercased search query across every
-// field someone would plausibly search by, including sheet no — this is
-// what lets the search reach across sheets instead of being scoped to
-// whichever one is currently expanded.
+// field someone would plausibly search by, including sheet no and encoder
+// username — this is what lets the search reach across sheets instead of
+// being scoped to whichever one is currently expanded. (encodedBy is still
+// read per-feature here purely because that's how the API shapes the data
+// — it's a display decision, not a data one, that moved it out of the lot
+// row UI; search-by-encoder still works the same as before.)
 function matchesLotQuery(f: LotFeature, query: string): boolean {
   const p = f.properties;
   const haystack = [
@@ -294,6 +332,7 @@ function matchesLotQuery(f: LotFeature, query: string): boolean {
     p.patentNo,
     p.remarks,
     p.sheetNo,
+    p.encodedBy,
   ];
   return haystack.some((v) => v != null && String(v).toLowerCase().includes(query));
 }
@@ -468,6 +507,7 @@ export default function AttributeTable({
           planUrl: f.properties.planUrl,
           province: f.properties.province,
           municipality: f.properties.municipality,
+          encodedBy: f.properties.encodedBy,
           lots: [f],
           totalArea: area,
         });
@@ -585,7 +625,7 @@ export default function AttributeTable({
               size={11}
               className="pointer-events-none absolute left-[9px] text-[var(--sb-text-faint)]"
             />
-            <Tooltip label="Search by owner, lot no., barangay, survey no., surveyor, patent no., or remarks">
+            <Tooltip label="Search by owner, lot no., barangay, survey no., surveyor, patent no., remarks, or encoded by">
               <input
                 type="text"
                 value={searchQuery}
@@ -639,6 +679,7 @@ export default function AttributeTable({
                 <span className="min-w-0 flex-1 truncate text-[11.5px] font-medium text-[var(--sb-text)]">
                   {expandedSheet.sheetNo}
                   {expandedSheet.municipality && ` — ${expandedSheet.municipality}, ${expandedSheet.province ?? ""}`}
+                  {expandedSheet.encodedBy && ` · Encoded by ${expandedSheet.encodedBy}`}
                 </span>
               </>
             ) : (
@@ -739,22 +780,20 @@ function SheetsTable({ groups, onOpenSheet }: { groups: SheetGroup[]; onOpenShee
           <Th>Plan</Th>
           <Th numeric>Lots</Th>
           <Th numeric>Total Area (sq.m.)</Th>
-          <th
-            className="sticky top-0 z-10 w-6 backdrop-blur"
-            style={{
-              background: "color-mix(in srgb, var(--sb-hover) 92%, transparent)",
-              borderBottom: `1px solid ${HAIRLINE}`,
-            }}
-            aria-hidden
-          />
+          <Th>Encoded By</Th>
         </tr>
       </thead>
       <tbody>
         {groups.map((g, i) => (
+          // No more chevron/action column — the whole row is the click
+          // target (onClick below) and a native title gives a plain
+          // "click to view lots" tooltip on hover, instead of a dedicated
+          // icon + themed Tooltip. Simpler markup, same affordance.
           <tr
             key={g.key}
             onClick={() => onOpenSheet(g.key)}
-            className="group cursor-pointer transition-colors duration-100"
+            title="Click to view lots"
+            className="cursor-pointer transition-colors duration-100"
             style={{
               borderBottom: `1px solid ${HAIRLINE_SOFT}`,
               background: i % 2 === 1 ? "color-mix(in srgb, var(--sb-hover) 45%, transparent)" : "transparent",
@@ -775,16 +814,7 @@ function SheetsTable({ groups, onOpenSheet }: { groups: SheetGroup[]; onOpenShee
             <td className="px-2.5 py-[6px] text-right tabular-nums text-[var(--sb-text-muted)]">
               {formatArea(g.totalArea)}
             </td>
-            <td className="px-1 py-[6px] text-[var(--sb-text-faint)]" onClick={(e) => e.stopPropagation()}>
-              <Tooltip label="View lots">
-                <span
-                  onClick={() => onOpenSheet(g.key)}
-                  className="flex h-5 w-5 cursor-pointer items-center justify-center rounded-full transition-colors group-hover:bg-[var(--sb-bg-elevated)] group-hover:text-[var(--sb-text)]"
-                >
-                  <ChevronRight size={13} />
-                </span>
-              </Tooltip>
-            </td>
+            <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{g.encodedBy || "—"}</td>
           </tr>
         ))}
       </tbody>

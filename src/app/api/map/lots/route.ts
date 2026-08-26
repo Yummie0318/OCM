@@ -32,6 +32,11 @@
 // "where is this tie point" going forward. We fall back to the legacy
 // l.province_id/l.municipality_id join only for older sheets that were saved
 // before control_point_id existed (cp.* will be null in that case).
+//
+// properties.encodedBy comes from lot_sheets.created_by -> users.username —
+// i.e. whoever encoded the SHEET this lot belongs to, not a per-lot value
+// (lots themselves don't carry their own created_by column). Every lot on
+// the same sheet will show the same encoder.
 import { NextResponse } from "next/server";
 import { getPool } from "@/lib/db";
 
@@ -148,7 +153,8 @@ export async function GET(request: Request) {
       COALESCE(cp.province_name, p.name) AS province_name,
       COALESCE(cp.municipality_name, m.name) AS municipality_name,
       b.name AS barangay_name,
-      s.name AS surveyor_name
+      s.name AS surveyor_name,
+      eu.username AS encoded_by_username
     FROM lots l
     LEFT JOIN lot_sheets ls ON ls.id = l.lot_sheet_id
     LEFT JOIN control_points cp ON cp.id = ls.control_point_id
@@ -156,6 +162,7 @@ export async function GET(request: Request) {
     LEFT JOIN municipalities m ON m.id = l.municipality_id
     LEFT JOIN barangays b ON b.id = l.barangay_id
     LEFT JOIN surveyors s ON s.id = l.surveyor_id
+    LEFT JOIN users eu ON eu.id = ls.created_by
     WHERE ${conditions.join(" AND ")}
     ORDER BY l.id
     LIMIT ${limitParam}
@@ -188,6 +195,7 @@ export async function GET(request: Request) {
       patentNo: row.patent_no,
       remarks: row.remarks,
       planUrl: row.plan_url,
+      encodedBy: row.encoded_by_username,
     },
   }));
 
