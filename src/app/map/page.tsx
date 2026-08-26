@@ -2,8 +2,42 @@
 
 // Target path: src/app/map/page.tsx
 //
+// ADD PLAN LINK WIRING (this pass): AttributeTable's new inline
+// "Add link" control (sheets list, Plan column — see its own file-top
+// comment) is wired up here via handleUpdatePlanUrl. It PATCHes
+// /api/lot-sheets/[id] with the new planUrl, then — on success —
+// optimistically patches every currently-loaded feature belonging to
+// that sheetId so the table (and anything else reading layerData) shows
+// the new link immediately, with no refetch. Throws (with the server's
+// error message when available) on failure so AttributeTable's inline
+// control can show it next to the input instead of failing silently.
+//
+// CLOSE DETAIL PANEL ON SIDEBAR LAYER TOGGLE (earlier pass): handleToggle —
+// called by Sidebar whenever a year checkbox is checked/unchecked (see
+// YearRow's onCheck in Sidebar.tsx), which is what actually adds/removes
+// a layer of polygons on the map — now also calls closeDetail(). Sidebar
+// itself has no knowledge of LotDetailPanel; it only ever calls this
+// onToggle prop, so this has to live here. Whenever the active layer
+// selection changes, whatever lot/sheet the detail panel was showing may
+// no longer even be part of the new selection, so it's closed rather than
+// left open showing stale/orphaned content while the map's contents shift
+// underneath it. This fires on BOTH checking a year on and unchecking one
+// off (handleToggle handles both via the `meta === null` branch).
+//
+// SHEET PREVIEW WIRING (earlier pass): AttributeTable's per-sheet "Preview"
+// button (see its SheetsTable / onViewSheet prop) is now wired up here.
+// Clicking it calls viewSheetInPanel with that sheet's full lot list,
+// which stores it in `sheetPreview` state and opens LotDetailPanel in
+// "sheet mode" (every lot on the sheet, overlaid polygons + a lot list —
+// see LotDetailPanel's own file for how it renders that). Clicking a lot
+// inside that list calls selectLotFromSheetPreview, which deliberately
+// does NOT clear sheetPreview (see its own comment below) so a "Back to
+// Sheet" action in LotDetailPanel's header can return to it. closeDetail
+// still clears sheetPreview so re-opening later doesn't briefly flash
+// stale sheet content.
+//
 // TABLE ROW CLICK NOW ZOOMS THE MAP + REFRESHES AN OPEN DETAIL PANEL
-// (this pass): clicking a row in AttributeTable highlights the row/
+// (earlier pass): clicking a row in AttributeTable highlights the row/
 // polygon (via `selectedId`, as before) and now additionally (a) fires a
 // `focusFeature` request at MapCanvas so the map fits/zooms to that lot's
 // polygon bounds, and (b) updates `selectedFeature` so an already-open
@@ -13,16 +47,26 @@
 // `detailPanelOpen` boolean, not by `selectedFeature` being non-null.
 // `openFeature` (map click's "View Lot Details" popup button, or a
 // search select) is the only thing that sets it true; the panel's own
-// close button (`closeDetail`) is the only thing that sets it false. A
-// table row click deliberately never touches `detailPanelOpen`: if the
-// panel is already open it now shows a different lot, but a row click
-// can never pop a closed panel open, and can never close one that's
-// already showing. See the `feature={detailPanelOpen ? selectedFeature
-// : null}` line on <LotDetailPanel /> below for where this is enforced.
+// close button (`closeDetail`) and now handleToggle (see above) are what
+// set it false. A table row click deliberately never touches
+// `detailPanelOpen`: if the panel is already open it now shows a
+// different lot, but a row click can never pop a closed panel open, and
+// can never close one that's already showing. See the
+// `feature={detailPanelOpen ? selectedFeature : null}` line on
+// <LotDetailPanel /> below for where this is enforced.
 //
 // `focusFeature` is a small piece of state — the clicked feature plus a
 // `token` (Date.now()) — passed straight through to MapCanvas, which
 // does the actual fitBounds work (see its file-top comment).
+//
+// MAP POLYGON CLICK SYNC (earlier pass): clicking a polygon directly on
+// the map now also calls selectFeatureFromTable (via MapCanvas's
+// onPolygonClick), same as clicking that lot's row in AttributeTable —
+// so the table auto-drills into/scrolls to the matching row, and an
+// already-open detail panel swaps to show it, without opening a closed
+// panel. Opening the popup's "View Lot Details" button still goes through
+// openFeature, unchanged, and is still the only thing a bare map click can
+// use to actually open a closed panel.
 //
 // AUTH WIRING (earlier pass): the sidebar used to always show the hardcoded
 // "Admin User" / "admin@example.com" defaults from Sidebar.tsx's props.
@@ -77,7 +121,7 @@ import { useRouter } from "next/navigation";
 import { Menu, ChevronDown, ChevronUp, Table2, Sun, Map as MapIcon, Moon, Satellite } from "lucide-react";
 import Sidebar from "@/components/map/Sidebar";
 import MapCanvas, { BASEMAPS, type BasemapId } from "@/components/map/MapCanvas";
-import AttributeTable from "@/components/map/AttributeTable";
+import AttributeTable, { type SheetPreviewRequest } from "@/components/map/AttributeTable";
 import LotDetailPanel from "@/components/map/LotDetailPanel";
 import { SidebarThemeProvider, useSidebarTheme } from "@/components/map/SidebarThemeContext";
 import { uiFont } from "@/components/map/sidebarTheme";
@@ -192,13 +236,23 @@ function MapViewerPageInner() {
   const [selectedId, setSelectedId] = useState<number | string | null>(null);
   const [selectedFeature, setSelectedFeature] = useState<LotFeature | null>(null);
 
+  // A whole-sheet preview requested from AttributeTable's per-row
+  // "Preview" eye button (sheets-list view). Shown in LotDetailPanel's
+  // "sheet mode" — every lot on that sheet, overlaid polygons + a lot
+  // list — whenever `selectedFeature` is null (single-lot selection
+  // always wins; see LotDetailPanel's own file for how it decides which
+  // mode to render). Cleared alongside everything else in closeDetail.
+  const [sheetPreview, setSheetPreview] = useState<SheetPreviewRequest | null>(null);
+
   // Whether LotDetailPanel is actually visible. Deliberately separate from
   // `selectedFeature` (which is just "what data would the panel show if it
   // were open"): the panel should only ever open via a deliberate action
-  // (clicking a polygon's "View Lot Details" popup button, or a search
-  // select) and only ever close via the user hitting its own close button
-  // — a table row click should be able to swap what's INSIDE an already-
-  // open panel without either opening a closed one or closing an open one.
+  // (clicking a polygon's "View Lot Details" popup button, a search
+  // select, or a sheet's "Preview" button) and only ever close via the
+  // user hitting its own close button, or the active layer selection
+  // changing underneath it (see handleToggle) — a table row click should
+  // be able to swap what's INSIDE an already-open panel without either
+  // opening a closed one or closing an open one.
 
   // A request to fit/zoom the map to a single lot's polygon bounds,
   // fired whenever a row is selected from AttributeTable. `token` is a
@@ -498,6 +552,16 @@ function MapViewerPageInner() {
 
   const isPeeking = !isMobile && sidebarCollapsed && peeking;
 
+  // Called by Sidebar whenever a year checkbox is checked/unchecked (see
+  // YearRow's onCheck in Sidebar.tsx) — this is what actually adds/removes
+  // a layer of polygons on the map. Whenever that happens, close the lot
+  // detail panel: the layer just changed under it, so whatever lot/sheet
+  // it was showing may no longer even be part of the current selection,
+  // and leaving it open while the map's contents shift is confusing.
+  // Sidebar itself has no knowledge of LotDetailPanel — it only ever
+  // calls this onToggle prop — so this has to live here, not in
+  // Sidebar.tsx. Fires on both adding a layer (meta non-null) and
+  // removing one (meta === null).
   function handleToggle(key: string, meta: SelectionMeta | null) {
     setActiveSelections((prev) => {
       const next = { ...prev };
@@ -505,6 +569,7 @@ function MapViewerPageInner() {
       else next[key] = meta;
       return next;
     });
+    closeDetail();
   }
 
   function handleViewLayer(key: string) {
@@ -525,37 +590,84 @@ function MapViewerPageInner() {
   // MapCanvas); this is only called when the user then clicks that
   // popup's "View Lot Details" button, or selects a search result. It
   // highlights the lot, loads it into the panel, AND deliberately opens
-  // the panel — this is the one and only "open" action.
+  // the panel — this is one of the "open" actions (the sheet Preview
+  // button, see viewSheetInPanel below, is the other).
   function openFeature(feature: LotFeature) {
     setSelectedId(feature.id);
     setSelectedFeature(feature);
+    setSheetPreview(null);
     setDetailPanelOpen(true);
     if (isMobile) setMobileOpen(false);
   }
 
-  // Attribute table row click: highlights the row (and, since MapCanvas
-  // highlights off the same selectedId, the polygon on the map),
-  // fires a focusFeature request so the map zooms to that lot's polygon
-  // bounds, and updates `selectedFeature` so the detail panel's content
-  // reflects this lot. Deliberately does NOT touch `detailPanelOpen`: if
-  // the panel is already open it swaps to show this lot, but a row click
-  // never opens a closed panel and never closes an open one — only the
-  // panel's own close button (see closeDetail) or a "View Lot Details"
-  // click (see openFeature) change whether it's showing at all.
+  // Attribute table row click AND map polygon click (via MapCanvas's
+  // onPolygonClick — both wired to this same function below): highlights
+  // the row (and, since MapCanvas highlights off the same selectedId, the
+  // polygon on the map), fires a focusFeature request so the map zooms to
+  // that lot's polygon bounds, and updates `selectedFeature` so the
+  // detail panel's content reflects this lot. Also clears any active
+  // sheetPreview, since a single lot always takes priority in
+  // LotDetailPanel's own mode logic anyway — clearing it here just keeps
+  // state tidy. Deliberately does NOT touch `detailPanelOpen`: if the
+  // panel is already open it swaps to show this lot, but this never opens
+  // a closed panel and never closes an open one — only the panel's own
+  // close button (see closeDetail), a "View Lot Details" click (see
+  // openFeature), a sheet Preview click (see viewSheetInPanel), or a
+  // sidebar layer toggle (see handleToggle) change whether it's showing
+  // at all.
   function selectFeatureFromTable(feature: LotFeature) {
+    setSelectedId(feature.id);
+    setSelectedFeature(feature);
+    setSheetPreview(null);
+    setFocusFeature({ feature, token: Date.now() });
+  }
+
+  // Fired from AttributeTable's per-sheet "Preview" eye button (sheets
+  // list view). Shows every lot on that sheet in LotDetailPanel's sheet
+  // mode — clears selectedFeature so the panel renders sheet mode instead
+  // of single-lot mode, and deliberately opens the panel, same as
+  // openFeature above.
+  function viewSheetInPanel(sheet: SheetPreviewRequest) {
+    setSelectedFeature(null);
+    setSheetPreview(sheet);
+    setDetailPanelOpen(true);
+  }
+
+  // Fired when a lot inside LotDetailPanel's sheet-preview list is
+  // clicked. Deliberately does NOT reuse selectFeatureFromTable, because
+  // that function always clears `sheetPreview` — which is correct for a
+  // map click or table row click (there's no sheet preview to preserve in
+  // those cases) but wrong here: this click happens *from inside* a sheet
+  // preview, and the whole point is to let the user come back to it (see
+  // backToSheetPreview below and the "Back to Sheet" button in
+  // LotDetailPanel). So this sets selectedId/selectedFeature/focusFeature
+  // the same way, but leaves `sheetPreview` untouched.
+  function selectLotFromSheetPreview(feature: LotFeature) {
     setSelectedId(feature.id);
     setSelectedFeature(feature);
     setFocusFeature({ feature, token: Date.now() });
   }
 
-  // The panel's own close button. This is the only place detailPanelOpen
-  // is ever set back to false (aside from the "selection vanished
-  // underneath us" effect below), so the panel only ever closes when the
-  // user deliberately closes it.
+  // The "Back to Sheet" button inside LotDetailPanel's single-lot header
+  // (only shown when the current lot came from a still-live sheetPreview,
+  // see LotDetailPanel's own `cameFromSheet`). Clearing just
+  // `selectedFeature` — and leaving `sheetPreview` and `detailPanelOpen`
+  // alone — is enough: LotDetailPanel's own `sheetMode` logic then takes
+  // over and renders the sheet view again, exactly like it does right
+  // after `viewSheetInPanel` first opens it.
+  function backToSheetPreview() {
+    setSelectedId(null);
+    setSelectedFeature(null);
+  }
+
+  // The panel's own close button, plus handleToggle (see above) — these
+  // are the only two places detailPanelOpen is ever set back to false
+  // (aside from the "selection vanished underneath us" effect below).
   function closeDetail() {
     setDetailPanelOpen(false);
     setSelectedId(null);
     setSelectedFeature(null);
+    setSheetPreview(null);
   }
 
   // Called by AttributeTable when the user picks a swatch (or "Clear
@@ -572,6 +684,77 @@ function MapViewerPageInner() {
         } else {
           delete next[key];
         }
+      }
+      return next;
+    });
+  }
+
+  // NEW — Called by AttributeTable's inline "Add link" control (sheets
+  // list, Plan column) when the user saves a plan URL for a sheet that
+  // had none yet. PATCHes /api/lot-sheets/[id]; on success, patches
+  // planUrl onto every currently-loaded feature belonging to that sheetId
+  // across all layers, so the table (and anything else reading
+  // layerData/allFeatures) reflects the new link immediately without a
+  // refetch. Throws on failure (with the server's message when available)
+  // so the inline control can surface the error next to its input instead
+  // of failing silently.
+  async function handleUpdatePlanUrl(sheetId: number, planUrl: string) {
+    const res = await fetch(`/api/lot-sheets/${sheetId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ planUrl }),
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || "Failed to save plan link.");
+    }
+
+    setLayerData((d) => {
+      const next: typeof d = {};
+      for (const [key, feats] of Object.entries(d)) {
+        next[key] = feats.map((f) =>
+          f.properties.sheetId === sheetId
+            ? { ...f, properties: { ...f.properties, planUrl } }
+            : f
+        );
+      }
+      return next;
+    });
+  }
+
+    // Called by AttributeTable's inline "Add survey no." control (sheets list
+  // Survey No. column, and drilled-in breadcrumb). PATCHes
+  // /api/lot-sheets/[id] with { surveyNo }. The API only fills lots on that
+  // sheet that currently have no survey_no — existing values are left alone.
+  // On success, optimistically patch the same rule into layerData so the
+  // table updates without a refetch. Throws on failure so the inline
+  // control can show the error next to its input.
+  async function handleUpdateSurveyNo(sheetId: number, surveyNo: string) {
+    const res = await fetch(`/api/lot-sheets/${sheetId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ surveyNo }),
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || "Failed to save survey number.");
+    }
+
+    setLayerData((d) => {
+      const next: typeof d = {};
+      for (const [key, feats] of Object.entries(d)) {
+        next[key] = feats.map((f) => {
+          if (f.properties.sheetId !== sheetId) return f;
+          const current = f.properties.surveyNo;
+          const empty = current == null || String(current).trim() === "";
+          if (!empty) return f;
+          return {
+            ...f,
+            properties: { ...f.properties, surveyNo },
+          };
+        });
       }
       return next;
     });
@@ -854,6 +1037,7 @@ async function handleLogout() {
             selectedId={selectedId}
             focusPoint={null}
             focusFeature={focusFeature}
+            onPolygonClick={selectFeatureFromTable}
             onFeatureClick={openFeature}
             lotColors={lotColors}
             basemapId={basemapId}
@@ -936,10 +1120,16 @@ async function handleLogout() {
               so a table row click (which updates selectedFeature but
               leaves detailPanelOpen untouched) can silently refresh the
               panel's content while it's open, without ever opening it
-              from closed. LotDetailPanel itself already renders nothing
-              when `feature` is null (see its own file). */}
+              from closed. `sheetPreview` is gated the same way, so a
+              sheet Preview click behaves consistently with everything
+              else. LotDetailPanel itself already renders nothing when
+              both `feature` and `sheetPreview` are null (see its own
+              file). */}
           <LotDetailPanel
             feature={detailPanelOpen ? selectedFeature : null}
+            sheetPreview={detailPanelOpen ? sheetPreview : null}
+            onSelectLot={selectLotFromSheetPreview}
+            onBackToSheet={backToSheetPreview}
             onClose={closeDetail}
             width={detailPanelWidth}
             isResizing={isDetailPanelResizing}
@@ -1020,6 +1210,9 @@ async function handleLogout() {
                   onClearFilter={() => setTableFilterKey(null)}
                   lotColors={lotColors}
                   onSetLotColors={handleSetLotColors}
+                  onViewSheet={viewSheetInPanel}
+                  onUpdatePlanUrl={handleUpdatePlanUrl}
+                  onUpdateSurveyNo={handleUpdateSurveyNo}
                 />
               </div>
             )}

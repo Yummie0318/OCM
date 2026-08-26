@@ -12,6 +12,20 @@
 // are left in place as a graceful fallback for the brief window before
 // that fetch resolves.
 //
+// REFRESH WIRING (this pass): added an optional `municipalitiesRefreshKey`
+// prop. Bump it (e.g. with Date.now()) from the map page after a lot sheet
+// saves successfully, and this component will:
+//   1. Refetch the top-level municipality list/counts.
+//   2. Refetch barangays for any MunicipalityNode that's currently expanded
+//      (previously this was cached in that node's local state and would go
+//      stale until manually collapsed/re-expanded).
+//   3. Refetch years for any BarangayNode that's currently expanded, same
+//      reasoning.
+// The key is threaded down through LayersPanel -> MunicipalityNode ->
+// BarangayNode; each node compares it against the value it last fetched
+// with and re-fetches (rather than just resetting to a skeleton) so an
+// already-open branch updates in place instead of collapsing.
+//
 // Changes in earlier passes (on top of the tooltip/search/create-shapefile/peek pass):
 //
 // 8. "Selected" tab rows now have a third icon (Table2) next to the label
@@ -100,6 +114,13 @@ onCreateShapefile: () => void;
   onViewLayer?: (key: string) => void;
   /** Key of the selection currently filtering the attribute table (for row highlight). */
   activeTableKey?: string | null;
+  /**
+   * Bump this (e.g. `Date.now()`) after a lot sheet saves successfully to
+   * force the municipality tree — including any already-expanded barangay
+   * and year branches — to refetch. Optional: if omitted, the tree only
+   * ever loads once on mount, same as before.
+   */
+  municipalitiesRefreshKey?: number;
 }
 
 // Hairline helpers — draw borders at reduced opacity against the theme's
@@ -274,6 +295,7 @@ export default function Sidebar({
   onCreateShapefile,
   onViewLayer,
   activeTableKey = null,
+  municipalitiesRefreshKey,
 }: SidebarProps) {
   const [municipalities, setMunicipalities] = useState<TreeNodeData[] | null>(null);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
@@ -283,9 +305,12 @@ export default function Sidebar({
   const accountRef = useRef<HTMLDivElement>(null);
   const { darkMode, toggleDarkMode, theme, vars } = useSidebarTheme();
 
+  // Re-runs on mount AND whenever the parent bumps municipalitiesRefreshKey
+  // (e.g. right after a lot sheet save succeeds), so newly-saved lots show
+  // up in the top-level counts without a manual page refresh.
   useEffect(() => {
     safeFetchArray("/api/map/tree?level=municipalities").then(setMunicipalities);
-  }, []);
+  }, [municipalitiesRefreshKey]);
 
   useEffect(() => {
     if (!accountMenuOpen) return;
@@ -554,6 +579,7 @@ export default function Sidebar({
             theme={theme}
             pendingExpandId={pendingExpandId}
             onAutoExpandHandled={() => setPendingExpandId(null)}
+            refreshKey={municipalitiesRefreshKey}
           />
         ) : (
           <SelectedPanel
@@ -745,6 +771,7 @@ function LayersPanel({
   theme,
   pendingExpandId,
   onAutoExpandHandled,
+  refreshKey,
 }: {
   municipalities: TreeNodeData[] | null;
   activeSelections: Record<string, SelectionMeta>;
@@ -752,6 +779,7 @@ function LayersPanel({
   theme: SidebarTheme;
   pendingExpandId: string | number | null;
   onAutoExpandHandled: () => void;
+  refreshKey?: number;
 }) {
   return (
     <div>
@@ -779,6 +807,7 @@ function LayersPanel({
             theme={theme}
             autoExpand={pendingExpandId === m.id}
             onAutoExpandHandled={onAutoExpandHandled}
+            refreshKey={refreshKey}
           />
         ))}
       </div>
@@ -869,6 +898,7 @@ function MunicipalityNode({
   theme,
   autoExpand,
   onAutoExpandHandled,
+  refreshKey,
 }: {
   node: TreeNodeData;
   activeSelections: Record<string, SelectionMeta>;
@@ -876,29 +906,45 @@ function MunicipalityNode({
   theme: SidebarTheme;
   autoExpand?: boolean;
   onAutoExpandHandled?: () => void;
+  refreshKey?: number;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [barangays, setBarangays] = useState<TreeNodeData[] | null>(null);
+  // Tracks which refreshKey value `barangays` was last fetched with, so the
+  // refresh effect below can tell "never loaded" apart from "loaded under
+  // an older key" without re-fetching on every render.
+  const loadedForKey = useRef<number | undefined>(undefined);
 
   function loadBarangays() {
-    if (barangays !== null) return;
+    loadedForKey.current = refreshKey;
     safeFetchArray(`/api/map/tree?level=barangays&municipality_id=${node.id}`).then(setBarangays);
   }
 
   function toggleExpand() {
     const next = !expanded;
     setExpanded(next);
-    if (next) loadBarangays();
+    if (next && barangays === null) loadBarangays();
   }
 
   useEffect(() => {
     if (autoExpand) {
       setExpanded(true);
-      loadBarangays();
+      if (barangays === null) loadBarangays();
       onAutoExpandHandled?.();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoExpand]);
+
+  // If this branch is expanded (so its barangay list is visible/cached)
+  // and a new refreshKey comes in from a save elsewhere, refetch it in
+  // place instead of leaving it stale until the user manually collapses
+  // and re-expands.
+  useEffect(() => {
+    if (expanded && refreshKey !== loadedForKey.current) {
+      loadBarangays();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshKey]);
 
   const hasActive = Object.keys(activeSelections).some(
     (k) => k.startsWith("year:") && activeSelections[k].query.municipality_id === node.id
@@ -935,6 +981,7 @@ function MunicipalityNode({
               activeSelections={activeSelections}
               onToggle={onToggle}
               theme={theme}
+              refreshKey={refreshKey}
             />
           ))}
         </div>
@@ -949,6 +996,7 @@ function BarangayNode({
   municipalityLabel,
   activeSelections,
   onToggle,
+  refreshKey,
 }: {
   node: TreeNodeData;
   municipalityId: number | string;
@@ -956,17 +1004,33 @@ function BarangayNode({
   activeSelections: Record<string, SelectionMeta>;
   onToggle: (key: string, meta: SelectionMeta | null) => void;
   theme: SidebarTheme;
+  refreshKey?: number;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [years, setYears] = useState<TreeNodeData[] | null>(null);
+  const loadedForKey = useRef<number | undefined>(undefined);
+
+  function loadYears() {
+    loadedForKey.current = refreshKey;
+    safeFetchArray(`/api/map/tree?level=years&barangay_id=${node.id}`).then(setYears);
+  }
 
   function toggleExpand() {
     const next = !expanded;
     setExpanded(next);
-    if (next && years === null) {
-      safeFetchArray(`/api/map/tree?level=years&barangay_id=${node.id}`).then(setYears);
-    }
+    if (next && years === null) loadYears();
   }
+
+  // Same "refetch in place if already expanded" behavior as
+  // MunicipalityNode above, one level down: a newly-saved lot can add a
+  // new year (or bump an existing year's count) under a barangay that's
+  // already open.
+  useEffect(() => {
+    if (expanded && refreshKey !== loadedForKey.current) {
+      loadYears();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshKey]);
 
   const hasActive = Object.keys(activeSelections).some((k) => k.startsWith(`year:${node.id}:`));
 

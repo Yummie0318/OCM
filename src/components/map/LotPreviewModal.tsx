@@ -2,22 +2,19 @@
 
 // Target path: src/components/map/LotPreviewModal.tsx
 //
-// New component. Replaces the old direct "Print / Export" action in
-// LotDetailPanel.tsx with a preview step: this modal shows the polygon
-// (via the same <ShapePreview>) and the full coordinates table together,
-// so the user can confirm the lot looks right *before* printing, rather
-// than exporting blind. The actual print/export call
-// (exportLotAsPrintable) now lives on this modal's "Print" button instead
-// of on the panel.
+// COMPACT LAYOUT (this pass): polygon and coordinates table used to be
+// stacked full-width, which left a lot of empty space next to the
+// coordinates table (it's rarely wide enough to need the full modal
+// width) and pushed the modal very tall for lots with lots of corners.
+// They're now laid out side by side — polygon fixed-width on the left,
+// coordinates table filling the remaining space on the right — below the
+// modal's sm: breakpoint they still stack, since a fixed two-column
+// layout wouldn't fit a narrow phone screen. The modal width also grew
+// slightly (640px -> 760px) to give the two-column layout room to
+// breathe.
 //
-// Themed to match Sidebar/AttributeTable: reads the shared --sb-* tokens
-// via useSidebarTheme(), so it re-skins with the rest of the app when dark
-// mode is toggled. Portaled to <body> (same pattern as Sidebar's Tooltip)
-// so it always paints above the map/sidebar/table regardless of any
-// ancestor's overflow/z-index.
-//
-// Layout is responsive: the coordinates table scrolls horizontally on
-// narrow viewports instead of squeezing columns or overflowing the modal.
+// Everything else (header, footer, print button, escape-to-close,
+// portal-to-body) is unchanged from the original.
 
 import { useEffect, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
@@ -83,7 +80,7 @@ export default function LotPreviewModal({ open, onClose, feature, points, shapes
       onClick={onClose}
     >
       <div
-        className={`${uiFont.className} flex max-h-[88vh] w-full max-w-[640px] flex-col overflow-hidden rounded-[16px] bg-[var(--sb-bg-elevated)] antialiased`}
+        className={`${uiFont.className} flex max-h-[88vh] w-full max-w-[760px] flex-col overflow-hidden rounded-[16px] bg-[var(--sb-bg-elevated)] antialiased`}
         style={{ ...vars, boxShadow: theme.shadow }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -108,63 +105,84 @@ export default function LotPreviewModal({ open, onClose, feature, points, shapes
           </button>
         </div>
 
-        {/* Body */}
+        {/* Body — polygon (left, fixed width) + coordinates table (right,
+            fills remaining space) side by side on sm+ screens; stacked
+            below that, since two fixed columns wouldn't fit a phone. */}
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-          <div className="overflow-hidden rounded-[10px]" style={{ boxShadow: `inset 0 0 0 1px ${HAIRLINE}` }}>
-            <ShapePreview
-              shapes={shapes}
-              height={280}
-              pointLabelMode="index"
-              emptyMessage="No geometry for this lot."
-            />
-          </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-[280px_1fr] sm:items-start">
+            <div
+              className="overflow-hidden rounded-[10px]"
+              style={{ boxShadow: `inset 0 0 0 1px ${HAIRLINE}` }}
+            >
+              <ShapePreview
+                shapes={shapes}
+                height={280}
+                pointLabelMode="index"
+                emptyMessage="No geometry for this lot."
+              />
+            </div>
 
-          <h4 className="mb-1.5 mt-4 text-[10px] font-bold uppercase tracking-wide text-[var(--sb-text-muted)]">
-            Technical Description ({points.length} corners)
-          </h4>
-          <div className="overflow-x-auto rounded-[10px]" style={{ boxShadow: `inset 0 0 0 1px ${HAIRLINE}` }}>
-            <table className="w-full min-w-[320px] border-collapse text-[11.5px]">
-              <thead>
-                <tr>
-                  <th className="whitespace-nowrap px-2.5 py-[7px] text-left font-semibold uppercase" style={TH_STYLE}>
-                    Station
-                  </th>
-                  <th className="whitespace-nowrap px-2.5 py-[7px] text-right font-semibold uppercase" style={TH_STYLE}>
-                    Northing
-                  </th>
-                  <th className="whitespace-nowrap px-2.5 py-[7px] text-right font-semibold uppercase" style={TH_STYLE}>
-                    Easting
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {points.map((pt, i) => (
-                  <tr
-                    key={pt.station}
-                    style={{
-                      borderTop: `1px solid ${HAIRLINE_SOFT}`,
-                      background:
-                        i % 2 === 1 ? "color-mix(in srgb, var(--sb-hover) 45%, transparent)" : "transparent",
-                    }}
-                  >
-                    <td className="px-2.5 py-[6px] font-medium text-[var(--sb-text)]">{pt.station}</td>
-                    <td className="px-2.5 py-[6px] text-right tabular-nums text-[var(--sb-text-muted)]">
-                      {pt.y.toFixed(2)}
-                    </td>
-                    <td className="px-2.5 py-[6px] text-right tabular-nums text-[var(--sb-text-muted)]">
-                      {pt.x.toFixed(2)}
-                    </td>
-                  </tr>
-                ))}
-                {points.length === 0 && (
-                  <tr>
-                    <td colSpan={3} className="px-2.5 py-4 text-center text-[var(--sb-text-faint)]">
-                      No coordinates available.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+            <div className="min-w-0">
+              <h4 className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-[var(--sb-text-muted)]">
+                Technical Description ({points.length} corners)
+              </h4>
+              <div
+                className="max-h-[280px] overflow-auto rounded-[10px]"
+                style={{ boxShadow: `inset 0 0 0 1px ${HAIRLINE}` }}
+              >
+                <table className="w-full min-w-[260px] border-collapse text-[11.5px]">
+                  <thead>
+                    <tr>
+                      <th
+                        className="sticky top-0 z-10 whitespace-nowrap px-2.5 py-[7px] text-left font-semibold uppercase"
+                        style={TH_STYLE}
+                      >
+                        Station
+                      </th>
+                      <th
+                        className="sticky top-0 z-10 whitespace-nowrap px-2.5 py-[7px] text-right font-semibold uppercase"
+                        style={TH_STYLE}
+                      >
+                        Northing
+                      </th>
+                      <th
+                        className="sticky top-0 z-10 whitespace-nowrap px-2.5 py-[7px] text-right font-semibold uppercase"
+                        style={TH_STYLE}
+                      >
+                        Easting
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {points.map((pt, i) => (
+                      <tr
+                        key={pt.station}
+                        style={{
+                          borderTop: `1px solid ${HAIRLINE_SOFT}`,
+                          background:
+                            i % 2 === 1 ? "color-mix(in srgb, var(--sb-hover) 45%, transparent)" : "transparent",
+                        }}
+                      >
+                        <td className="px-2.5 py-[6px] font-medium text-[var(--sb-text)]">{pt.station}</td>
+                        <td className="px-2.5 py-[6px] text-right tabular-nums text-[var(--sb-text-muted)]">
+                          {pt.y.toFixed(2)}
+                        </td>
+                        <td className="px-2.5 py-[6px] text-right tabular-nums text-[var(--sb-text-muted)]">
+                          {pt.x.toFixed(2)}
+                        </td>
+                      </tr>
+                    ))}
+                    {points.length === 0 && (
+                      <tr>
+                        <td colSpan={3} className="px-2.5 py-4 text-center text-[var(--sb-text-faint)]">
+                          No coordinates available.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
         </div>
 

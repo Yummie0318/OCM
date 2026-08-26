@@ -1,9 +1,22 @@
 "use client";
 
+// Target path: src/components/ExportFooter.tsx
+//
+// GOOGLE DRIVE VALIDATION (this pass): the optional "Plan link" field in
+// the Save-to-Database modal is now validated the same way as
+// AttributeTable's "Add link" control — it must be a traceable Google
+// Drive/Docs URL (see isTraceableGoogleDriveLink in src/lib/planLink.ts)
+// when non-empty. Checked in handleSave, right before the POST — an
+// invalid link sets saveState to "error" with an explanatory message and
+// never reaches the network, same pattern as the missing-tie-point check
+// just above it. The field itself stays optional: leaving it blank still
+// saves fine, matching the original behavior.
+
 import { useState } from "react";
 import type { ComputedLot, ControlPoint, Lot } from "@/types";
 import { downloadGeoJSON, downloadKML, downloadShapefile } from "@/lib/exporters";
 import { labelCls, inputCls } from "@/components/ControlPointForm";
+import { isTraceableGoogleDriveLink, PLAN_LINK_HELP_MESSAGE } from "@/lib/planLink";
 
 const HAIRLINE = "color-mix(in srgb, var(--sb-border) 70%, transparent)";
 
@@ -155,6 +168,18 @@ export default function ExportFooter({ lots, computedLots, controlPoint }: Props
       return;
     }
 
+    // The plan link is optional, but if one was entered it has to be a
+    // traceable Google Drive/Docs link — same rule enforced by
+    // AttributeTable's "Add link" control and the PATCH route, so a
+    // sheet can never end up with an untraceable link regardless of
+    // which screen it was set from.
+    const trimmedPlanUrl = planUrl.trim();
+    if (trimmedPlanUrl && !isTraceableGoogleDriveLink(trimmedPlanUrl)) {
+      setSaveState("error");
+      setSaveMessage(PLAN_LINK_HELP_MESSAGE);
+      return;
+    }
+
     setSaveState("saving");
     setSaveMessage(null);
     setDuplicates([]);
@@ -188,7 +213,7 @@ export default function ExportFooter({ lots, computedLots, controlPoint }: Props
           ppcsNorthing: controlPoint.ppcsNorthing,
           ppcsEasting: controlPoint.ppcsEasting,
           zone: controlPoint.zone,
-          planUrl: planUrl.trim() || null,
+          planUrl: trimmedPlanUrl || null,
           lots: payloadLots,
         }),
       });
@@ -277,14 +302,14 @@ export default function ExportFooter({ lots, computedLots, controlPoint }: Props
                 </label>
 
                 <label className={labelCls}>
-                  Plan link (optional)
+                  Plan link (optional — must be Google Drive)
                   <input
                     className={inputCls}
                     type="url"
                     value={planUrl}
                     disabled={saveState === "saving"}
                     onChange={(e) => setPlanUrl(e.target.value)}
-                    placeholder="https://drive.google.com/…"
+                    placeholder="https://drive.google.com/file/d/…"
                   />
                 </label>
 

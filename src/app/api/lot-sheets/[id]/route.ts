@@ -1,6 +1,7 @@
-// Target path in your project: src/app/api/lot-sheets/[id]/route.ts
+// Target path: src/app/api/lot-sheets/[id]/route.ts
 import { NextResponse } from "next/server";
 import { getPool } from "@/lib/db";
+import { isTraceableGoogleDriveLink, PLAN_LINK_HELP_MESSAGE } from "@/lib/planLink";
 
 export async function GET(
   _request: Request,
@@ -40,4 +41,130 @@ export async function GET(
     ...sheetResult.rows[0],
     lots: lotsResult.rows,
   });
+}
+
+// PATCH: attach or replace the plan link (plan_url) on an existing sheet,
+// and/or set survey_no on every lot on that sheet that currently has no
+// survey number.
+//
+// Called from AttributeTable's inline controls (sheets list + drilled-in
+// breadcrumb) via handlers in src/app/map/page.tsx.
+//
+// Body may include either or both:
+//   { planUrl?: string, surveyNo?: string }
+//
+// planUrl (when present):
+// - Required to be a non-blank, traceable Google Drive/Docs URL
+//   (isTraceableGoogleDriveLink). Same rules as before.
+// - Updates lot_sheets.plan_url only.
+//
+// surveyNo (when present):
+// - Plain text (not a URL). Trimmed; blank after trim is rejected.
+// - Updates lots.survey_no ONLY for rows on this sheet where survey_no
+//   is currently NULL or empty string — lots that already have a survey
+//   number are left alone. This mirrors the "fill missing" intent of the
+//   plan link, but scoped to per-lot columns that may already differ.
+//
+// - 400 if the id isn't a valid number, or if a provided field fails
+//   validation (blank planUrl / surveyNo, or non-traceable planUrl).
+// - 400 if the body has neither planUrl nor surveyNo.
+// - 404 if no lot_sheets row has that id.
+// - 200 with { ok: true, planUrl?, surveyNo?, updatedLotCount? } on success.
+export async function PATCH(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;
+  const sheetId = Number(id);
+
+  if (!Number.isFinite(sheetId)) {
+    return NextResponse.json({ error: "Invalid sheet id." }, { status: 400 });
+  }
+
+  const body = await request.json().catch(() => ({}));
+  const hasPlanUrl = Object.prototype.hasOwnProperty.call(body, "planUrl");
+  const hasSurveyNo = Object.prototype.hasOwnProperty.call(body, "surveyNo");
+
+  if (!hasPlanUrl && !hasSurveyNo) {
+    return NextResponse.json(
+      { error: "Provide planUrl and/or surveyNo." },
+      { status: 400 }
+    );
+  }
+
+  const planUrl =
+    hasPlanUrl && typeof body.planUrl === "string" ? body.planUrl.trim() : null;
+  const surveyNo =
+    hasSurveyNo && typeof body.surveyNo === "string" ? body.surveyNo.trim() : null;
+
+  if (hasPlanUrl) {
+    if (!planUrl) {
+      return NextResponse.json({ error: "Plan link is required." }, { status: 400 });
+    }
+    if (!isTraceableGoogleDriveLink(planUrl)) {
+      return NextResponse.json({ error: PLAN_LINK_HELP_MESSAGE }, { status: 400 });
+    }
+  }
+
+  if (hasSurveyNo && !surveyNo) {
+    return NextResponse.json({ error: "Survey number is required." }, { status: 400 });
+  }
+
+  const pool = getPool();
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    // Confirm the sheet exists before touching lots or plan_url.
+    const sheetCheck = await client.query(
+      `SELECT id FROM lot_sheets WHERE id = $1`,
+      [sheetId]
+    );
+    if (sheetCheck.rows.length === 0) {
+      await client.query("ROLLBACK");
+      return NextResponse.json({ error: "Sheet not found." }, { status: 404 });
+    }
+
+    let returnedPlanUrl: string | undefined;
+    if (hasPlanUrl && planUrl) {
+      await client.query(
+        `UPDATE lot_sheets SET plan_url = $1 WHERE id = $2`,
+        [planUrl, sheetId]
+      );
+      returnedPlanUrl = planUrl;
+    }
+
+    let updatedLotCount: number | undefined;
+    if (hasSurveyNo && surveyNo) {
+      // Only fill lots that currently have no survey number — do not
+      // overwrite an existing value on any lot on this sheet.
+      const lotResult = await client.query(
+        `UPDATE lots
+         SET survey_no = $1
+         WHERE lot_sheet_id = $2
+           AND (survey_no IS NULL OR TRIM(survey_no) = '')
+         RETURNING id`,
+        [surveyNo, sheetId]
+      );
+      updatedLotCount = lotResult.rowCount ?? 0;
+    }
+
+    await client.query("COMMIT");
+
+    return NextResponse.json({
+      ok: true,
+      ...(returnedPlanUrl !== undefined ? { planUrl: returnedPlanUrl } : {}),
+      ...(surveyNo !== null && hasSurveyNo ? { surveyNo, updatedLotCount } : {}),
+    });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("PATCH /api/lot-sheets/[id] failed:", err);
+    return NextResponse.json(
+      { error: "Failed to update sheet." },
+      { status: 500 }
+    );
+  } finally {
+    client.release();
+  }
 }

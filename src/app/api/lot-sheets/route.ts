@@ -1,4 +1,21 @@
 // Target path in your project: src/app/api/lot-sheets/route.ts
+//
+// DB MIGRATION REQUIRED (run once against your database before this goes
+// live) — enforces "no duplicate lot number" at the DB level as a backstop
+// against the two racing requests scenario, which no amount of
+// pre-INSERT SELECT checking alone can fully close:
+//
+//   ALTER TABLE lots ADD CONSTRAINT lots_lot_no_unique UNIQUE (lot_no);
+//
+// NOTE: this makes lot_no unique across the ENTIRE table. If lot numbers are
+// only meant to be unique within a barangay/sheet (i.e. the same lot_no is
+// allowed to legitimately repeat elsewhere), use a composite constraint
+// instead, e.g.:
+//
+//   ALTER TABLE lots ADD CONSTRAINT lots_lot_no_unique UNIQUE (lot_no, barangay_id);
+//
+// and change the two lot_no checks below (the pre-check SELECT and the
+// duplicates array) to match on the same combination of columns.
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { getPool } from "@/lib/db";
@@ -63,32 +80,45 @@ export async function POST(request: Request) {
     );
   }
 
+  // --- Duplicate check #1: same lot_no repeated within THIS submission ---
+  // Checked before touching the DB at all, since the DB-side check below
+  // only sees rows already saved — two lots with the same lot_no in one
+  // request would both pass that check and both get inserted otherwise.
+  const seenInBatch = new Set<string>();
+  const inBatchDuplicates: string[] = [];
+  for (const lot of body.lots) {
+    if (seenInBatch.has(lot.lotNo)) inBatchDuplicates.push(lot.lotNo);
+    seenInBatch.add(lot.lotNo);
+  }
+  if (inBatchDuplicates.length > 0) {
+    return NextResponse.json(
+      {
+        error: "Duplicate Lot No. within the submitted sheet.",
+        duplicates: inBatchDuplicates,
+      },
+      { status: 409 }
+    );
+  }
+
   const pool = getPool();
   const client = await pool.connect();
 
   try {
-    // --- Duplicate check: same lot_no + survey_no already in the DB ---
+    // --- Duplicate check #2: same lot_no already saved in the database ---
+    // Lot numbers must be unique on their own now (previously this only
+    // flagged a duplicate when BOTH lot_no and survey_no matched).
     const lotNos = body.lots.map((l) => l.lotNo);
-    const surveyNos = body.lots.map((l) => l.surveyNo ?? "");
 
     const dupCheck = await client.query(
-      `SELECT lot_no, survey_no
-       FROM lots
-       WHERE (lot_no, COALESCE(survey_no, '')) IN (
-         SELECT * FROM UNNEST($1::text[], $2::text[])
-       )`,
-      [lotNos, surveyNos]
+      `SELECT lot_no FROM lots WHERE lot_no = ANY($1::text[])`,
+      [lotNos]
     );
 
     if (dupCheck.rows.length > 0) {
       return NextResponse.json(
         {
-          error:
-            "One or more lots already exist in the database (same Lot No. and Survey No.).",
-          duplicates: dupCheck.rows.map((r) => ({
-            lotNo: r.lot_no,
-            surveyNo: r.survey_no,
-          })),
+          error: "One or more lots already exist in the database (duplicate Lot No.).",
+          duplicates: dupCheck.rows.map((r) => ({ lotNo: r.lot_no })),
         },
         { status: 409 }
       );
@@ -159,8 +189,21 @@ export async function POST(request: Request) {
       { id: lotSheetId, sheetNo: body.sheetNo, lots: insertedLots },
       { status: 201 }
     );
-  } catch (err) {
+  } catch (err: any) {
     await client.query("ROLLBACK").catch(() => {});
+
+    // Postgres unique_violation — the DB-level constraint (see migration
+    // note at the top of this file) caught a duplicate lot_no that slipped
+    // past the pre-check above, most likely two concurrent saves racing
+    // each other. Report it the same way as the pre-check instead of
+    // falling through to a generic 500.
+    if (err?.code === "23505") {
+      return NextResponse.json(
+        { error: "One or more lots already exist in the database (duplicate Lot No.)." },
+        { status: 409 }
+      );
+    }
+
     console.error("Failed to save lot sheet:", err);
     return NextResponse.json(
       { error: "Failed to save lot sheet." },

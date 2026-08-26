@@ -2,8 +2,27 @@
 
 // Target path: src/components/map/MapCanvas.tsx
 //
-// TABLE-ROW ZOOM (this pass): AttributeTable row clicks now also zoom the
-// map to that lot's polygon. Wired via a new `focusFeature` prop — an
+// SYNC MAP CLICKS TO THE TABLE (this pass): clicking a polygon now also
+// reports the click via a new `onPolygonClick` prop, fired every time a
+// polygon is clicked — independent of `onFeatureClick`. This is what lets
+// the parent page set `selectedId` from a map click the same way it
+// already does from an AttributeTable row click, so:
+//   - the clicked lot's row auto-scrolls into view / highlights in
+//     AttributeTable (see that file's handling of an externally-changed
+//     `selectedId`), and
+//   - the map's own highlight layers (which already read `selectedId` via
+//     the `applyHighlight` effect below) actually light up the clicked
+//     polygon, which — since nothing previously fed `selectedId` from a
+//     map click — they didn't before.
+// `onFeatureClick` is UNCHANGED: it still only fires from the "View Lot
+// Details" button inside the popup, so LotDetailPanel continues to open
+// only on that deliberate second action, never on the bare polygon click.
+// Wired with the same ref-mirroring pattern as `onFeatureClickRef` so the
+// listener registered once inside "load" always calls whatever
+// `onPolygonClick` the page currently has.
+//
+// TABLE-ROW ZOOM (earlier pass): AttributeTable row clicks now also zoom
+// the map to that lot's polygon. Wired via a new `focusFeature` prop — an
 // object carrying the clicked LotFeature plus a `token` (a value that
 // changes on every click, even re-clicks of the same lot) so the effect
 // below always re-fires. This is deliberately separate from the existing
@@ -132,6 +151,16 @@ interface Props {
   // is selected from AttributeTable so the map zooms to match. Optional;
   // callers that don't need this (e.g. simpler embeds) can omit it.
   focusFeature?: FocusFeatureRequest | null;
+  // Fired EVERY time a lot polygon is clicked on the map, regardless of
+  // whether the popup's "View Lot Details" button is ever pressed. Intended
+  // for the parent to mirror into whatever `selectedId` state it already
+  // uses for AttributeTable row clicks, so a map click highlights/scrolls
+  // to the matching row the same way a table click already highlights the
+  // matching polygon. Does NOT open LotDetailPanel — that stays gated
+  // behind `onFeatureClick` below.
+  onPolygonClick?: (feature: LotFeature) => void;
+  // Fired only when the "View Lot Details" button inside the popup is
+  // clicked — this is the sole trigger for opening LotDetailPanel.
   onFeatureClick?: (feature: LotFeature) => void;
   // Map of lot id (stringified) -> hex color. Owned by the page (lifted up
   // from AttributeTable's color-selection toolbar). Optional so MapCanvas
@@ -405,6 +434,7 @@ export default function MapCanvas({
   selectedId,
   focusPoint,
   focusFeature,
+  onPolygonClick,
   onFeatureClick,
   lotColors,
   basemapId = "light",
@@ -434,6 +464,10 @@ export default function MapCanvas({
   // whichever one was in scope back when the listener was attached.
   const onFeatureClickRef = useRef(onFeatureClick);
   onFeatureClickRef.current = onFeatureClick;
+  // Same pattern for onPolygonClick — fired on every polygon click, not
+  // just the "View Lot Details" button.
+  const onPolygonClickRef = useRef(onPolygonClick);
+  onPolygonClickRef.current = onPolygonClick;
 
   // Create the map once.
   useEffect(() => {
@@ -515,8 +549,9 @@ export default function MapCanvas({
         });
 
         // Highlight layers for the currently selected lot (clicked on the
-        // map, or opened via search) — filtered down to a single feature
-        // id, drawn on top of the base fill/line layers.
+        // map, or opened via search, or selected via an AttributeTable row)
+        // — filtered down to a single feature id, drawn on top of the base
+        // fill/line layers.
         //
         // IMPORTANT: these read __color too, via the same coalesce
         // pattern as the base fill layer. That means a colored lot stays
@@ -557,7 +592,8 @@ export default function MapCanvas({
           // Strip the internal __color field we injected so it doesn't
           // leak into app-level LotFeature consumers. Built up front (not
           // just when the button is clicked) since it needs to be the
-          // value captured in the button's click listener's closure.
+          // value captured in the button's click listener's closure, and
+          // is also what we hand to onPolygonClick below.
           const { __color, ...cleanProps } = p;
           const cleanFeature = {
             type: "Feature",
@@ -565,6 +601,14 @@ export default function MapCanvas({
             geometry: feature.geometry,
             properties: cleanProps,
           } as LotFeature;
+
+          // Fires on every polygon click, regardless of what happens with
+          // the popup below. This is what lets the parent page mirror the
+          // click into whatever `selectedId` state already drives
+          // AttributeTable row highlighting — it does NOT open
+          // LotDetailPanel; that stays gated behind the button handler
+          // further down.
+          onPolygonClickRef.current?.(cleanFeature);
 
           popupRef.current = new maplibregl.Popup({
             closeButton: true,
@@ -576,14 +620,14 @@ export default function MapCanvas({
             .setHTML(buildPopupHtml(p))
             .addTo(map);
 
-          // Clicking the polygon only opens this popup now — it no longer
-          // calls onFeatureClick on its own. Opening the Lot Detail Panel
-          // is now a deliberate second action: the "View Lot Details"
-          // button inside the popup we just rendered. Grab the popup's
-          // live DOM node and wire that button up. No manual teardown
-          // needed: this whole element gets replaced/removed on the next
-          // click (see popupRef.current.remove() above) or on
-          // closeOnClick, taking the listener with it.
+          // Clicking the polygon only opens this popup (and reports
+          // onPolygonClick above) — it does NOT call onFeatureClick on its
+          // own. Opening the Lot Detail Panel is still a deliberate second
+          // action: the "View Lot Details" button inside the popup we just
+          // rendered. Grab the popup's live DOM node and wire that button
+          // up. No manual teardown needed: this whole element gets
+          // replaced/removed on the next click (see popupRef.current.remove()
+          // above) or on closeOnClick, taking the listener with it.
           const popupEl = popupRef.current.getElement?.();
           const viewDetailsBtn = popupEl?.querySelector(".lot-popup-view-details");
           if (viewDetailsBtn) {

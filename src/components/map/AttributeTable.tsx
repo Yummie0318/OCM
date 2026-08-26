@@ -2,14 +2,94 @@
 
 // Target path: src/components/map/AttributeTable.tsx
 //
-// ENCODED BY (this pass): moved from a per-lot column to a per-SHEET
+// BREADCRUMB PLAN LINK (earlier pass): the drilled-into-a-sheet breadcrumb
+// ("Sheets / {sheetNo} — {municipality}, {province} · Encoded by
+// {username}") previously had no way to see or attach that sheet's plan
+// link — the only place to do that was the sheets-list Plan column, which
+// meant going back to "Sheets" first. The breadcrumb now has its own Plan
+// segment, reusing the exact same <PlanLink> / <AddPlanLinkControl>
+// components the sheets list already uses: if the drilled-in sheet has a
+// planUrl, it renders the "View" link; if it doesn't (and sheetId +
+// onUpdatePlanUrl are both available), it renders the same inline
+// "Add link" control. Saving through either place updates the same
+// planUrl on the same sheetId, so both views always agree — there's only
+// ever one plan link per sheet, just two places to see/edit it now.
+//
+// SHEET SURVEY NO (this pass): survey number is per-lot text (not a
+// link), but lots on the same sheet often share one. Like plan links, the
+// sheets list and drilled-in breadcrumb can now attach a survey number
+// for every lot on that sheet that still has none. Saving calls
+// onUpdateSurveyNo(sheetId, surveyNo) → PATCH /api/lot-sheets/[id] with
+// { surveyNo }, which only UPDATEs lots where survey_no IS NULL or
+// blank — existing values are never overwritten. SheetGroup derives a
+// display surveyNo (first non-empty among its lots) and hasMissingSurveyNo
+// so the UI can show the current value and/or an "Add survey no." control.
+//
+// GOOGLE DRIVE VALIDATION (earlier pass): the "Add link" plan-link control
+// (see ADD PLAN LINK note below) now rejects anything that isn't a
+// traceable Google Drive/Docs URL — validated client-side here via
+// isTraceableGoogleDriveLink (src/lib/planLink.ts) before it's even sent
+// to the parent's onUpdatePlanUrl, so the user gets instant feedback
+// instead of a round-trip error. The same rule is enforced again
+// server-side in the PATCH route (see its own file), since a client
+// check alone can always be bypassed by hitting the API directly — this
+// client check is purely a UX nicety.
+//
+// ADD PLAN LINK (earlier pass): the sheets-list Plan column now lets the
+// user attach a plan link to a sheet that doesn't have one yet, instead
+// of just showing "—". Each SheetGroup now carries `sheetId` (the numeric
+// lot_sheets FK, not the display sheetNo) so the new `onUpdatePlanUrl`
+// prop can tell the parent exactly which sheet to update. When a sheet
+// has no planUrl and the parent has passed onUpdatePlanUrl, the Plan cell
+// renders <AddPlanLinkControl>: a small "Add link" button that expands
+// into an inline URL input + Save/Cancel. Saving calls
+// onUpdatePlanUrl(sheetId, url), which the parent uses to PATCH
+// /api/lot-sheets/[id] and patch the loaded features' planUrl locally so
+// this table reflects it immediately (no refetch). Errors from the save
+// are shown inline next to the input rather than swallowed. The whole
+// cell still calls stopPropagation so typing/clicking in it never
+// triggers the row's own "drill into sheet" onClick.
+//
+// SHEET PREVIEW BUTTON (earlier pass): each row in the sheets list now has a
+// dedicated "Preview" column with an eye-icon button. Clicking it calls
+// the new `onViewSheet` prop with that sheet's full lot list (id, no,
+// province/municipality, all lots) — this is what lets the parent show a
+// whole-sheet preview (every lot's polygon + a lot list) in
+// LotDetailPanel, separate from drilling into the sheet's lots table
+// here. The button calls stopPropagation so clicking it doesn't also
+// trigger the row's own onClick (which still just drills in, unchanged).
+// The column itself is only rendered when a caller actually passes
+// onViewSheet, so existing usages that don't care about this still look
+// exactly as before.
+//
+// SYNC WITH MAP CLICKS (earlier pass): the parent now also updates the
+// `selectedId` prop when a polygon is clicked directly on the map (see
+// MapCanvas's new `onPolygonClick`), not just when a table row is
+// clicked. Two additions make that useful here instead of silently
+// no-oping when the matching row isn't currently visible:
+//   1. If `selectedId` changes to a lot that belongs to a sheet other than
+//      whichever one is currently drilled into (or no sheet is drilled
+//      into at all), the table auto-expands that lot's sheet — same as
+//      clicking that sheet's row in the sheets list would. Skipped while
+//      a search is active, since search results already show a flat
+//      cross-sheet list with no drill-down step needed.
+//   2. Once the matching row is part of whatever's currently rendered
+//      (a drilled sheet's LotsTable, or search results), it's scrolled
+//      into view. This lives inside LotsTable itself (see its own
+//      comment) since that's the component that actually owns the row
+//      DOM nodes.
+// This does NOT open LotDetailPanel — that still only happens via the
+// "View Lot Details" button in the map popup (see MapCanvas /
+// LotDetailPanel), completely unchanged by this pass.
+//
+// ENCODED BY (earlier pass): moved from a per-lot column to a per-SHEET
 // display. "Encoded By" (properties.encodedBy, sourced from
 // lot_sheets.created_by -> users.username in /api/map/lots) is a fact
 // about the SHEET, not the lot — every lot on the same sheet has the same
 // value, since lots don't carry their own created_by column. Previously it
 // was rendered as a column on every lot row (repeating identically down
 // the table), which read like a per-lot attribute. It now shows up:
-//   - once per sheet, as the LAST column in SheetsTable (the sheets-list
+//   - once per sheet, as a column in SheetsTable (the sheets-list
 //     view), and
 //   - in the breadcrumb once you've drilled into a sheet ("Sheet {no} —
 //     {municipality}, {province} · Encoded by {username}").
@@ -18,7 +98,7 @@
 // p.encodedBy off each lot feature) — that's just how the underlying data
 // arrives per-feature; only the *display* location moved.
 //
-// SHEETS-ROW AFFORDANCE (this pass): the per-row "view lots" chevron
+// SHEETS-ROW AFFORDANCE (earlier pass): the per-row "view lots" chevron
 // icon + themed Tooltip column has been removed. The whole row is still
 // the click target (onClick on the <tr>), and a plain native
 // `title="Click to view lots"` on the <tr> gives the hover tooltip
@@ -92,9 +172,9 @@
 //   a sheet, it switches to that sheet's own lot count/area instead, so
 //   the number on screen always matches what you're actually looking at.
 // - The breadcrumb no longer repeats the lot count/area (that's the top
-//   bar's job now) or the "Plan" link (already available per-row in the
-//   sheets list) — it's "Sheet {no} — {municipality}, {province}", plus
-//   the encoder (see ENCODED BY above).
+//   bar's job now) — it's "Sheet {no} — {municipality}, {province}",
+//   plus the encoder (see ENCODED BY above) and now the Plan link/control
+//   (see BREADCRUMB PLAN LINK above).
 // - Search bar: searches the flat `features` list directly (lot no, owner,
 //   barangay, municipality, survey no, surveyor, patent no, remarks,
 //   encoded-by username, and sheet no), so it finds lots across every
@@ -140,12 +220,13 @@
 //   height, pill-radius controls, custom checkbox skin).
 
 import React from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { LotFeature } from "@/lib/geo";
+import { isTraceableGoogleDriveLink, PLAN_LINK_HELP_MESSAGE } from "@/lib/planLink";
 import SummaryBar from "@/components/map/SummaryBar";
 import { useSidebarTheme } from "@/components/map/SidebarThemeContext";
 import { uiFont } from "@/components/map/sidebarTheme";
-import { Table2, X, ChevronLeft, ExternalLink, Search, Palette, Check } from "lucide-react";
+import { Table2, X, ChevronLeft, ExternalLink, Search, Palette, Check, Eye, Link2 } from "lucide-react";
 
 // Presets are a starting point, not a hard limit — the custom swatch (a
 // native color input) covers anything outside this set.
@@ -233,6 +314,17 @@ function Tooltip({
   );
 }
 
+// A whole sheet's worth of lots, handed up via onViewSheet when the
+// per-row preview button is clicked. Deliberately a plain object (not the
+// internal SheetGroup type) so callers outside this file don't need to
+// know about SheetGroup's other bookkeeping fields (key, totalArea, etc).
+export interface SheetPreviewRequest {
+  sheetNo: string;
+  province: string | null;
+  municipality: string | null;
+  lots: LotFeature[];
+}
+
 interface Props {
   features: LotFeature[];
   onRowClick?: (feature: LotFeature) => void;
@@ -251,10 +343,45 @@ interface Props {
   // Called with every currently-checked lot id plus the chosen color (or
   // null to clear) when the user picks a swatch in the selection toolbar.
   onSetLotColors?: (lotIds: Array<string | number>, color: string | null) => void;
+  // Called when the "Preview" eye button on a sheet row (sheets-list
+  // view only) is clicked, with that sheet's full lot list. Intended for
+  // the parent to show a whole-sheet preview (every lot's polygon + a lot
+  // list) in LotDetailPanel — separate from the row's own click, which
+  // still just drills into that sheet's lots table here. The Preview
+  // column only renders when this is provided.
+  onViewSheet?: (sheet: SheetPreviewRequest) => void;
+  // Called when the user saves a plan link via the inline "Add link"
+  // control — either the sheets list (Plan column) or the drilled-in
+  // sheet's breadcrumb (see BREADCRUMB PLAN LINK above) — for a sheet
+  // that had no planUrl yet. `sheetId` is the numeric lot_sheets FK. The
+  // URL has already passed isTraceableGoogleDriveLink here before this
+  // is ever called (see AddPlanLinkControl) — the parent is responsible
+  // for persisting it (e.g. PATCH /api/lot-sheets/[id], which
+  // re-validates server-side) and for updating planUrl on the loaded
+  // features so this table reflects it immediately. A rejected promise
+  // shows its message inline next to the input. The control only renders
+  // when this is provided AND the group's sheetId is known.
+  onUpdatePlanUrl?: (sheetId: number, planUrl: string) => Promise<void>;
+  // Called when the user saves a survey number via the inline "Add survey
+  // no." control — sheets list (Survey No. column) or drilled-in
+  // breadcrumb — for lots on that sheet that still have no survey_no.
+  // `sheetId` is the numeric lot_sheets FK. The parent PATCHes
+  // /api/lot-sheets/[id] with { surveyNo }; the API only fills lots where
+  // survey_no is null/blank and leaves existing values alone. Parent
+  // should also patch loaded features' surveyNo for lots that were empty
+  // so this table updates without a refetch. Control only renders when
+  // this is provided, sheetId is known, and the group has at least one
+  // lot missing a survey number.
+  onUpdateSurveyNo?: (sheetId: number, surveyNo: string) => Promise<void>;
 }
 
 interface SheetGroup {
   key: string;
+  // Numeric lot_sheets FK, when the API provided one — needed so
+  // onUpdatePlanUrl knows exactly which sheet row to update. Falls back
+  // to null for the rare "unsheeted" grouping bucket (see the `key`
+  // derivation below), where there's no real sheet row to update.
+  sheetId: number | null;
   sheetNo: string;
   planUrl: string | null;
   province: string | null;
@@ -265,6 +392,11 @@ interface SheetGroup {
   // breadcrumb) instead of repeated on every lot row — see ENCODED BY note
   // at the top of the file.
   encodedBy: string | null;
+  // First non-empty surveyNo among lots on this sheet (display only).
+  // Lots may already differ; hasMissingSurveyNo tracks whether any lot
+  // still lacks a value so the "Add survey no." control can appear.
+  surveyNo: string | null;
+  hasMissingSurveyNo: boolean;
   lots: LotFeature[];
   totalArea: number;
 }
@@ -350,6 +482,231 @@ function PlanLink({ url, stopPropagation, label }: { url: string; stopPropagatio
     },
     React.createElement(ExternalLink, { size: 11 }),
     label
+  );
+}
+
+// Inline "attach a survey number" control — same UX shape as
+// AddPlanLinkControl, but plain text (no Google Drive validation). Used
+// on the sheets-list Survey No. column and the drilled-in breadcrumb.
+// Saving calls onSave(sheetId, surveyNo); the parent PATCHes the sheet
+// API, which only fills lots that currently have no survey_no.
+function AddSurveyNoControl({
+  sheetId,
+  onSave,
+}: {
+  sheetId: number;
+  onSave: (sheetId: number, surveyNo: string) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function cancel() {
+    setEditing(false);
+    setValue("");
+    setError(null);
+  }
+
+  async function handleSave() {
+    const trimmed = value.trim();
+    if (!trimmed) return;
+
+    setSaving(true);
+    setError(null);
+    try {
+      await onSave(sheetId, trimmed);
+      setEditing(false);
+      setValue("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't save survey no.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!editing) {
+    return (
+      <Tooltip label="Set survey number on all lots on this sheet that don't have one yet">
+        <button
+          type="button"
+          onClick={() => setEditing(true)}
+          className="inline-flex items-center gap-1 text-[11.5px] font-medium text-[var(--sb-text-faint)] transition-colors hover:text-[var(--sb-accent)]"
+        >
+          Add survey no.
+        </button>
+      </Tooltip>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+      <input
+        autoFocus
+        type="text"
+        value={value}
+        disabled={saving}
+        onChange={(e) => {
+          setValue(e.target.value);
+          if (error) setError(null);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") handleSave();
+          if (e.key === "Escape") cancel();
+        }}
+        placeholder="Survey number…"
+        className="w-[120px] rounded-md px-1.5 py-[3px] text-[11px] outline-none"
+        style={{
+          background: "var(--sb-bg)",
+          boxShadow: `inset 0 0 0 1px ${error ? "#ef4444" : HAIRLINE}`,
+          color: "var(--sb-text)",
+        }}
+      />
+      <button
+        type="button"
+        onClick={handleSave}
+        disabled={saving || !value.trim()}
+        className="text-[10.5px] font-semibold text-[var(--sb-accent)] disabled:opacity-40"
+      >
+        {saving ? "…" : "Save"}
+      </button>
+      <button
+        type="button"
+        onClick={cancel}
+        disabled={saving}
+        className="text-[10.5px] text-[var(--sb-text-faint)]"
+      >
+        Cancel
+      </button>
+      {error && (
+        <Tooltip label={error}>
+          <span className="flex h-[14px] w-[14px] flex-shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-red-500">
+            !
+          </span>
+        </Tooltip>
+      )}
+    </div>
+  );
+}
+
+// Inline "attach a plan link" control. Used in two places now: the
+// sheets-list Plan column, and the drilled-in-sheet breadcrumb (see
+// BREADCRUMB PLAN LINK above) — both pass the same sheetId/onSave, so
+// saving through either one updates the same underlying sheet. Starts as
+// a small ghost button ("Add link"); clicking it swaps in a compact URL
+// input + Save/Cancel. Enter saves, Escape cancels.
+//
+// The link is required to be a real Google Drive/Docs URL pointing at a
+// specific file or folder (see isTraceableGoogleDriveLink in
+// src/lib/planLink.ts) — checked here BEFORE calling onSave, so a bad
+// link never even reaches the network. This is purely a UX nicety: the
+// same rule is re-checked server-side in the PATCH route, since a client
+// check can always be bypassed. Both a local validation failure and a
+// rejected onSave (e.g. the server-side check failing, or a network
+// error) surface the same way: a small red "!" with the message in its
+// own tooltip, right next to the input.
+function AddPlanLinkControl({
+  sheetId,
+  onSave,
+}: {
+  sheetId: number;
+  onSave: (sheetId: number, planUrl: string) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function cancel() {
+    setEditing(false);
+    setValue("");
+    setError(null);
+  }
+
+  async function handleSave() {
+    const trimmed = value.trim();
+    if (!trimmed) return;
+
+    if (!isTraceableGoogleDriveLink(trimmed)) {
+      setError(PLAN_LINK_HELP_MESSAGE);
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    try {
+      await onSave(sheetId, trimmed);
+      setEditing(false);
+      setValue("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't save link.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!editing) {
+    return (
+      <Tooltip label="Add a Google Drive link to this sheet's plan">
+        <button
+          type="button"
+          onClick={() => setEditing(true)}
+          className="inline-flex items-center gap-1 text-[11.5px] font-medium text-[var(--sb-text-faint)] transition-colors hover:text-[var(--sb-accent)]"
+        >
+          <Link2 size={11} />
+          Add link
+        </button>
+      </Tooltip>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-1">
+      <input
+        autoFocus
+        type="url"
+        value={value}
+        disabled={saving}
+        onChange={(e) => {
+          setValue(e.target.value);
+          if (error) setError(null);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") handleSave();
+          if (e.key === "Escape") cancel();
+        }}
+        placeholder="Paste Google Drive link…"
+        className="w-[168px] rounded-md px-1.5 py-[3px] text-[11px] outline-none"
+        style={{
+          background: "var(--sb-bg)",
+          boxShadow: `inset 0 0 0 1px ${error ? "#ef4444" : HAIRLINE}`,
+          color: "var(--sb-text)",
+        }}
+      />
+      <button
+        type="button"
+        onClick={handleSave}
+        disabled={saving || !value.trim()}
+        className="text-[10.5px] font-semibold text-[var(--sb-accent)] disabled:opacity-40"
+      >
+        {saving ? "…" : "Save"}
+      </button>
+      <button
+        type="button"
+        onClick={cancel}
+        disabled={saving}
+        className="text-[10.5px] text-[var(--sb-text-faint)]"
+      >
+        Cancel
+      </button>
+      {error && (
+        <Tooltip label={error}>
+          <span className="flex h-[14px] w-[14px] flex-shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-red-500">
+            !
+          </span>
+        </Tooltip>
+      )}
+    </div>
   );
 }
 
@@ -471,6 +828,9 @@ export default function AttributeTable({
   onClearFilter,
   lotColors,
   onSetLotColors,
+  onViewSheet,
+  onUpdatePlanUrl,
+  onUpdateSurveyNo,
 }: Props) {
   const { vars } = useSidebarTheme();
   const [expandedSheetKey, setExpandedSheetKey] = useState<string | null>(null);
@@ -497,17 +857,25 @@ export default function AttributeTable({
         f.properties.sheetId != null ? `id:${f.properties.sheetId}` : `no:${f.properties.sheetNo ?? "unsheeted"}`;
       const area = Number(f.properties.areaSqm) || 0;
       const existing = map.get(key);
+      const rawSurvey = f.properties.surveyNo;
+      const surveyStr =
+        rawSurvey != null && String(rawSurvey).trim() !== "" ? String(rawSurvey).trim() : null;
       if (existing) {
         existing.lots.push(f);
         existing.totalArea += area;
+        if (!existing.surveyNo && surveyStr) existing.surveyNo = surveyStr;
+        if (!surveyStr) existing.hasMissingSurveyNo = true;
       } else {
         map.set(key, {
           key,
+          sheetId: typeof f.properties.sheetId === "number" ? f.properties.sheetId : null,
           sheetNo: f.properties.sheetNo || "—",
           planUrl: f.properties.planUrl,
           province: f.properties.province,
           municipality: f.properties.municipality,
           encodedBy: f.properties.encodedBy,
+          surveyNo: surveyStr,
+          hasMissingSurveyNo: !surveyStr,
           lots: [f],
           totalArea: area,
         });
@@ -521,6 +889,25 @@ export default function AttributeTable({
       setExpandedSheetKey(null);
     }
   }, [expandedSheetKey, sheetGroups]);
+
+  // Auto-drill into whichever sheet owns `selectedId` when it changes to a
+  // lot the currently-expanded sheet doesn't contain — this is what makes
+  // clicking a polygon directly on the map (see MapCanvas's
+  // onPolygonClick) actually bring that lot's row into view here, instead
+  // of silently doing nothing because the sheets list is still showing.
+  // Skipped while searching: search results are already a flat cross-sheet
+  // list, so there's no drill-down step to perform.
+  useEffect(() => {
+    if (selectedId == null || isSearching) return;
+    const idStr = String(selectedId);
+
+    const currentGroup = expandedSheetKey ? sheetGroups.find((g) => g.key === expandedSheetKey) : null;
+    if (currentGroup?.lots.some((f) => String(f.id) === idStr)) return;
+
+    const owningGroup = sheetGroups.find((g) => g.lots.some((f) => String(f.id) === idStr));
+    if (owningGroup) setExpandedSheetKey(owningGroup.key);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId, isSearching, sheetGroups]);
 
   // Drop any checked ids that no longer exist in the current feature set
   // (e.g. the sidebar filter changed underneath the table) so the "select
@@ -681,6 +1068,43 @@ export default function AttributeTable({
                   {expandedSheet.municipality && ` — ${expandedSheet.municipality}, ${expandedSheet.province ?? ""}`}
                   {expandedSheet.encodedBy && ` · Encoded by ${expandedSheet.encodedBy}`}
                 </span>
+
+                {/* Plan link/control — see BREADCRUMB PLAN LINK note at the
+                    top of the file. Kept as its own flex-shrink-0 segment
+                    (not folded into the truncating span above it) since
+                    AddPlanLinkControl renders interactive input/buttons
+                    that shouldn't get clipped by a truncated ancestor. */}
+                <span className="flex-shrink-0 text-[var(--sb-text-faint)]">·</span>
+                <span className="flex-shrink-0">
+                  {expandedSheet.planUrl ? (
+                    <PlanLink url={expandedSheet.planUrl} label="Plan" />
+                  ) : expandedSheet.sheetId != null && onUpdatePlanUrl ? (
+                    <AddPlanLinkControl sheetId={expandedSheet.sheetId} onSave={onUpdatePlanUrl} />
+                  ) : (
+                    <span className="text-[11.5px] text-[var(--sb-text-faint)]">No plan</span>
+                  )}
+                </span>
+
+                {/* Survey no. — display existing + optional "Add survey no."
+                    for lots still missing one (see SHEET SURVEY NO). */}
+                <span className="flex-shrink-0 text-[var(--sb-text-faint)]">·</span>
+                <span className="flex-shrink-0 flex items-center gap-1.5">
+                  {expandedSheet.surveyNo ? (
+                    <span className="text-[11.5px] text-[var(--sb-text-muted)]">
+                      Survey {expandedSheet.surveyNo}
+                    </span>
+                  ) : null}
+                  {expandedSheet.hasMissingSurveyNo &&
+                  expandedSheet.sheetId != null &&
+                  onUpdateSurveyNo ? (
+                    <AddSurveyNoControl
+                      sheetId={expandedSheet.sheetId}
+                      onSave={onUpdateSurveyNo}
+                    />
+                  ) : !expandedSheet.surveyNo ? (
+                    <span className="text-[11.5px] text-[var(--sb-text-faint)]">No survey no.</span>
+                  ) : null}
+                </span>
               </>
             ) : (
               <span className="text-[11.5px] font-medium text-[var(--sb-text-faint)]">Search results</span>
@@ -731,7 +1155,13 @@ export default function AttributeTable({
             onToggleColorSelectAll={() => toggleColorSelectAll(expandedSheet.lots)}
           />
         ) : (
-          <SheetsTable groups={sheetGroups} onOpenSheet={setExpandedSheetKey} />
+          <SheetsTable
+            groups={sheetGroups}
+            onOpenSheet={setExpandedSheetKey}
+            onViewSheet={onViewSheet}
+            onUpdatePlanUrl={onUpdatePlanUrl}
+            onUpdateSurveyNo={onUpdateSurveyNo}
+          />
         )}
       </div>
     </div>
@@ -769,7 +1199,24 @@ function Th({ children, numeric }: { children: React.ReactNode; numeric?: boolea
   );
 }
 
-function SheetsTable({ groups, onOpenSheet }: { groups: SheetGroup[]; onOpenSheet: (key: string) => void }) {
+function SheetsTable({
+  groups,
+  onOpenSheet,
+  onViewSheet,
+  onUpdatePlanUrl,
+  onUpdateSurveyNo,
+}: {
+  groups: SheetGroup[];
+  onOpenSheet: (key: string) => void;
+  // See SheetPreviewRequest above — only the fields the parent actually
+  // needs to build a whole-sheet preview, not the internal SheetGroup
+  // bookkeeping fields (key, totalArea).
+  onViewSheet?: (sheet: SheetPreviewRequest) => void;
+  // See onUpdatePlanUrl on Props above.
+  onUpdatePlanUrl?: (sheetId: number, planUrl: string) => Promise<void>;
+  // See onUpdateSurveyNo on Props above.
+  onUpdateSurveyNo?: (sheetId: number, surveyNo: string) => Promise<void>;
+}) {
   return (
     <table className="w-full border-collapse text-[11.5px]">
       <thead>
@@ -778,17 +1225,23 @@ function SheetsTable({ groups, onOpenSheet }: { groups: SheetGroup[]; onOpenShee
           <Th>Municipality</Th>
           <Th>Province</Th>
           <Th>Plan</Th>
+          <Th>Survey No.</Th>
           <Th numeric>Lots</Th>
           <Th numeric>Total Area (sq.m.)</Th>
           <Th>Encoded By</Th>
+          {onViewSheet && <Th>Preview</Th>}
         </tr>
       </thead>
       <tbody>
         {groups.map((g, i) => (
-          // No more chevron/action column — the whole row is the click
-          // target (onClick below) and a native title gives a plain
-          // "click to view lots" tooltip on hover, instead of a dedicated
-          // icon + themed Tooltip. Simpler markup, same affordance.
+          // No more chevron/action column for the "drill in" affordance —
+          // the whole row is still that click target (onClick below) and
+          // a native title gives a plain "click to view lots" tooltip on
+          // hover. The Preview column (below, when onViewSheet is
+          // provided) and the Plan cell's inline edit control are both
+          // deliberately separate, explicit actions with their own
+          // stopPropagation so neither also triggers the row's drill-in
+          // click.
           <tr
             key={g.key}
             onClick={() => onOpenSheet(g.key)}
@@ -807,14 +1260,52 @@ function SheetsTable({ groups, onOpenSheet }: { groups: SheetGroup[]; onOpenShee
             <td className="px-2.5 py-[6px] font-medium text-[var(--sb-text)]">{g.sheetNo}</td>
             <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{g.municipality || "—"}</td>
             <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{g.province || "—"}</td>
-            <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">
-              {g.planUrl ? <PlanLink url={g.planUrl} stopPropagation label="View" /> : "—"}
+            <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]" onClick={(e) => e.stopPropagation()}>
+              {g.planUrl ? (
+                <PlanLink url={g.planUrl} label="View" />
+              ) : g.sheetId != null && onUpdatePlanUrl ? (
+                <AddPlanLinkControl sheetId={g.sheetId} onSave={onUpdatePlanUrl} />
+              ) : (
+                "—"
+              )}
+            </td>
+            <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]" onClick={(e) => e.stopPropagation()}>
+              <span className="inline-flex flex-wrap items-center gap-1.5">
+                {g.surveyNo ? (
+                  <span className="text-[var(--sb-text)]">{g.surveyNo}</span>
+                ) : null}
+                {g.hasMissingSurveyNo && g.sheetId != null && onUpdateSurveyNo ? (
+                  <AddSurveyNoControl sheetId={g.sheetId} onSave={onUpdateSurveyNo} />
+                ) : !g.surveyNo ? (
+                  "—"
+                ) : null}
+              </span>
             </td>
             <td className="px-2.5 py-[6px] text-right tabular-nums text-[var(--sb-text-muted)]">{g.lots.length}</td>
             <td className="px-2.5 py-[6px] text-right tabular-nums text-[var(--sb-text-muted)]">
               {formatArea(g.totalArea)}
             </td>
             <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{g.encodedBy || "—"}</td>
+            {onViewSheet && (
+              <td className="px-2.5 py-[6px]" onClick={(e) => e.stopPropagation()}>
+                <Tooltip label="Preview whole sheet — all lots + coordinates">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onViewSheet({
+                        sheetNo: g.sheetNo,
+                        province: g.province,
+                        municipality: g.municipality,
+                        lots: g.lots,
+                      })
+                    }
+                    className="flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded-[7px] border-0 bg-[var(--sb-accent-bg)] p-0 text-[var(--sb-accent)] transition-colors duration-100 hover:opacity-75"
+                  >
+                    <Eye size={12} />
+                  </button>
+                </Tooltip>
+              </td>
+            )}
           </tr>
         ))}
       </tbody>
@@ -848,6 +1339,24 @@ function LotsTable({
   const columns = showSheetNo ? ["Sheet No.", ...LOT_COLUMNS] : LOT_COLUMNS;
   const visibleIds = features.map((f) => String(f.id));
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => colorSelectedIds.has(id));
+
+  // Row DOM nodes keyed by (stringified) lot id, so the effect below can
+  // scroll the currently-selected one into view — this is what brings a
+  // lot clicked directly on the map into visible/scrolled focus here,
+  // once AttributeTable has (if needed) auto-drilled into its sheet.
+  const rowRefs = useRef<Record<string, HTMLTableRowElement | null>>({});
+
+  useEffect(() => {
+    if (selectedId == null) return;
+    const el = rowRefs.current[String(selectedId)];
+    if (el) {
+      el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+    // Re-run whenever the selection changes OR the visible feature set
+    // changes (e.g. right after AttributeTable auto-drills into a sheet
+    // and this row first mounts).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId, features]);
 
   return (
     <table className="w-full border-collapse text-[11.5px]">
@@ -895,6 +1404,9 @@ function LotsTable({
           return (
             <tr
               key={f.id}
+              ref={(el) => {
+                rowRefs.current[id] = el;
+              }}
               onClick={() => onRowClick?.(f)}
               style={{ background: baseBg, borderBottom: `1px solid ${HAIRLINE_SOFT}` }}
               className={`transition-colors duration-100 ${onRowClick ? "cursor-pointer" : ""}`}
