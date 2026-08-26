@@ -6,10 +6,10 @@ import type { LotFeature } from "./geo";
  * that MapCanvas/LotMapModal draw.
  *
  * ComputedLot only carries lotNo/owner/areaSqm from the original Lot --
- * fields like ownerGivenName, province, surveyNo, patentNo, planUrl, etc.
- * live elsewhere in your data model (not threaded through computeLot()
- * today), so they're nulled out here. Popup will simply show "-" for
- * those until you wire them through Lot -> ComputedLot -> here.
+ * fields like ownerGivenName, province, surveyNo, patentNo, planUrl,
+ * encodedBy, etc. live elsewhere in your data model (not threaded through
+ * computeLot() today), so they're nulled out here. Popup will simply show
+ * "-" for those until you wire them through Lot -> ComputedLot -> here.
  */
 export function computedLotToFeature(lot: ComputedLot): LotFeature {
   const coordinates = lot.points.map((p) => [p.lon, p.lat]) as [number, number][];
@@ -41,6 +41,10 @@ export function computedLotToFeature(lot: ComputedLot): LotFeature {
       patentNo: null,
       remarks: null,
       planUrl: null,
+      // Same reasoning as sheetId/sheetNo above: this is a client-side
+      // preview built before the lot sheet is saved, so there's no real
+      // lot_sheets.created_by / encoder username yet.
+      encodedBy: null,
       areaSqm: Number(lot.computedAreaSqm ?? lot.areaSqm ?? 0),
     },
   };
