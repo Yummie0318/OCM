@@ -50,6 +50,35 @@ function getMissingFields(lot: Lot): string[] {
   return missing;
 }
 
+// Catches two lots in THIS sheet (not the DB — that's the separate 409
+// duplicate check in handleSave) that share the same Lot No. AND the same
+// area. That combination almost always means the same corner set got
+// entered/computed twice by mistake (e.g. a copy-paste lot that was never
+// edited), so it's worth blocking the save modal over rather than letting
+// it silently create two identical-looking lot rows.
+//
+// Area is rounded to 2 decimals before comparing so two lots that are
+// "the same" but differ only by floating-point noise from the area
+// calculation still count as duplicates.
+function getDuplicateLotNos(computedLots: ComputedLot[]): string[] {
+  const seen = new Map<string, number>();
+  const dupes = new Set<string>();
+
+  computedLots.forEach((c) => {
+    const lotNo = c.lotNo.trim();
+    if (!lotNo) return;
+    const area = Number(c.computedAreaSqm ?? c.areaSqm ?? 0);
+    const key = `${lotNo.toLowerCase()}|${area.toFixed(2)}`;
+    if (seen.has(key)) {
+      dupes.add(lotNo);
+    } else {
+      seen.set(key, area);
+    }
+  });
+
+  return Array.from(dupes);
+}
+
 const ghostBtnCls =
   "rounded-full border-0 bg-[var(--sb-hover)] px-3 py-[7px] text-[12px] font-semibold text-[var(--sb-text)] transition-opacity hover:opacity-80 disabled:opacity-40";
 const accentBtnCls =
@@ -88,6 +117,19 @@ export default function ExportFooter({ lots, computedLots, controlPoint }: Props
     if (problems.length > 0) {
       setValidationError(
         problems.map((p) => `${p.label}: missing ${p.fields.join(", ")}`).join("  ·  ")
+      );
+      return;
+    }
+
+    // Same Lot No. + same Area within this sheet -> almost certainly an
+    // accidental duplicate lot. Block the modal here, same as a missing
+    // required field, instead of letting it reach the DB duplicate check
+    // (which only compares lotNo + surveyNo, not area, and only against
+    // already-saved rows).
+    const duplicateLotNos = getDuplicateLotNos(computedLots);
+    if (duplicateLotNos.length > 0) {
+      setValidationError(
+        `Duplicate lot${duplicateLotNos.length > 1 ? "s" : ""} with the same Lot No. and Area: ${duplicateLotNos.join(", ")}`
       );
       return;
     }
