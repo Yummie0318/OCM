@@ -33,6 +33,23 @@ function computedLotToFeature(computed: ComputedLot, lot: Lot | undefined) {
   };
 }
 
+// Fields required before a lot can be saved. patentNo and remarks are
+// intentionally excluded — they stay optional.
+function getMissingFields(lot: Lot): string[] {
+  const missing: string[] = [];
+  if (!lot.lotNo.trim()) missing.push("Lot No.");
+  if (!lot.areaSqm.trim()) missing.push("Area");
+  if (!lot.ownerGivenName.trim()) missing.push("Given name");
+  if (!lot.ownerSurname.trim()) missing.push("Surname");
+  if (!lot.provinceId) missing.push("Province");
+  if (!lot.municipalityId) missing.push("Municipality");
+  if (!lot.barangayId) missing.push("Barangay");
+  if (!lot.surveyorId) missing.push("Surveyor");
+  if (!lot.surveyNo.trim()) missing.push("Survey No.");
+  if (!lot.dateSurveyed.trim()) missing.push("Date surveyed");
+  return missing;
+}
+
 const ghostBtnCls =
   "rounded-full border-0 bg-[var(--sb-hover)] px-3 py-[7px] text-[12px] font-semibold text-[var(--sb-text)] transition-opacity hover:opacity-80 disabled:opacity-40";
 const accentBtnCls =
@@ -47,6 +64,7 @@ export default function ExportFooter({ lots, computedLots, controlPoint }: Props
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [duplicates, setDuplicates] = useState<{ lotNo: string; surveyNo: string }[]>([]);
+  const [validationError, setValidationError] = useState<string | null>(null);
 
   function openModal() {
     setSheetNo("");
@@ -55,6 +73,27 @@ export default function ExportFooter({ lots, computedLots, controlPoint }: Props
     setSaveMessage(null);
     setDuplicates([]);
     setModalOpen(true);
+  }
+
+  function handleSaveClick() {
+    const problems: { label: string; fields: string[] }[] = [];
+
+    lots.forEach((lot, idx) => {
+      const missing = getMissingFields(lot);
+      if (missing.length > 0) {
+        problems.push({ label: lot.lotNo.trim() || `Lot #${idx + 1}`, fields: missing });
+      }
+    });
+
+    if (problems.length > 0) {
+      setValidationError(
+        problems.map((p) => `${p.label}: missing ${p.fields.join(", ")}`).join("  ·  ")
+      );
+      return;
+    }
+
+    setValidationError(null);
+    openModal();
   }
 
   function closeModal() {
@@ -130,32 +169,35 @@ export default function ExportFooter({ lots, computedLots, controlPoint }: Props
 
   return (
     <>
-      {/* In-flow footer bar — sits at the bottom of the modal card because
-          the modal's shell is a flex column and this is its last child. */}
-      <div
-        className="flex flex-shrink-0 items-center justify-between gap-3 px-5 py-3"
-        style={{ borderTop: `1px solid ${HAIRLINE}`, background: "var(--sb-bg-elevated)" }}
-      >
-        <div className="text-[12px] text-[var(--sb-text-muted)]">
-          {ready ? (
-            <>
-              <strong className="text-[var(--sb-text)]">{computedLots.length}</strong> lot{computedLots.length > 1 ? "s" : ""} ready
-            </>
-          ) : (
-            "Add 3+ corners to a lot"
-          )}
+      <div className="flex flex-shrink-0 flex-col gap-2 px-5 py-3" style={{ borderTop: `1px solid ${HAIRLINE}`, background: "var(--sb-bg-elevated)" }}>
+        <div className="flex items-center justify-between gap-3">
+          <div className="text-[12px] text-[var(--sb-text-muted)]">
+            {ready ? (
+              <>
+                <strong className="text-[var(--sb-text)]">{computedLots.length}</strong> lot{computedLots.length > 1 ? "s" : ""} ready
+              </>
+            ) : (
+              "Add 3+ corners to a lot"
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button disabled={!ready} onClick={() => downloadGeoJSON(computedLots)} className={ghostBtnCls}>GeoJSON</button>
+            <button disabled={!ready} onClick={() => downloadKML(computedLots)} className={ghostBtnCls}>KML</button>
+            <button disabled={!ready} onClick={() => downloadShapefile(computedLots, controlPoint)} className={accentBtnCls} style={{ background: "var(--sb-text)" }}>
+              Shapefile
+            </button>
+            <button disabled={!ready} onClick={handleSaveClick} className={accentBtnCls} style={{ background: "var(--sb-accent)" }}>
+              Save
+            </button>
+          </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <button disabled={!ready} onClick={() => downloadGeoJSON(computedLots)} className={ghostBtnCls}>GeoJSON</button>
-          <button disabled={!ready} onClick={() => downloadKML(computedLots)} className={ghostBtnCls}>KML</button>
-          <button disabled={!ready} onClick={() => downloadShapefile(computedLots, controlPoint)} className={accentBtnCls} style={{ background: "var(--sb-text)" }}>
-            Shapefile
-          </button>
-          <button disabled={!ready} onClick={openModal} className={accentBtnCls} style={{ background: "var(--sb-accent)" }}>
-            Save
-          </button>
-        </div>
+        {validationError && (
+          <p className="rounded-[8px] px-2.5 py-1.5 text-[11.5px] text-red-500" style={{ background: "rgba(239,68,68,0.08)" }}>
+            Please complete before saving — {validationError}
+          </p>
+        )}
       </div>
 
       {modalOpen && (
