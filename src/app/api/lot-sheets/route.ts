@@ -49,8 +49,14 @@ interface LotSheetInput {
   ppcsEasting?: number | null;
   zone?: number | null;
   planUrl?: string | null;
+  documentsUrl?: string | null;
+  surveyClass?: string | null; // "admin" | "private" — see DB CHECK constraint
   lots: LotInput[];
 }
+
+// Mirrors the DB CHECK constraint on lot_sheets.survey_class
+// (CHECK (survey_class IN ('admin', 'private'))).
+const SURVEY_CLASSES = ["admin", "private"] as const;
 
 export async function POST(request: Request) {
   // Who's making this request. middleware.ts already requires a valid
@@ -76,6 +82,16 @@ export async function POST(request: Request) {
   if (!body.sheetNo || !body.lots || body.lots.length === 0) {
     return NextResponse.json(
       { error: "sheetNo and at least one lot are required." },
+      { status: 400 }
+    );
+  }
+
+  if (
+    body.surveyClass != null &&
+    !(SURVEY_CLASSES as readonly string[]).includes(body.surveyClass)
+  ) {
+    return NextResponse.json(
+      { error: `surveyClass must be one of: ${SURVEY_CLASSES.join(", ")}.` },
       { status: 400 }
     );
   }
@@ -130,8 +146,9 @@ export async function POST(request: Request) {
       `INSERT INTO lot_sheets
         (sheet_no, control_point_id,
          lpcs_northing, lpcs_easting, ppcs_northing, ppcs_easting, zone, plan_url,
+         documents_url, survey_class,
          created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
        RETURNING id`,
       [
         body.sheetNo,
@@ -142,6 +159,8 @@ export async function POST(request: Request) {
         body.ppcsEasting ?? null,
         body.zone ?? null,
         body.planUrl ?? null,
+        body.documentsUrl ?? null,
+        body.surveyClass ?? null,
         session.userId,
       ]
     );
@@ -219,7 +238,7 @@ export async function GET() {
   const pool = getPool();
   const { rows } = await pool.query(
     `SELECT
-        ls.id, ls.sheet_no, ls.plan_url, ls.created_at,
+        ls.id, ls.sheet_no, ls.plan_url, ls.documents_url, ls.survey_class, ls.created_at,
         cp.tie_point_name, cp.province_name, cp.municipality_name,
         COUNT(l.id) AS lot_count,
         u.username AS created_by_username
@@ -227,7 +246,7 @@ export async function GET() {
      LEFT JOIN control_points cp ON cp.id = ls.control_point_id
      LEFT JOIN lots l ON l.lot_sheet_id = ls.id
      LEFT JOIN users u ON u.id = ls.created_by
-     GROUP BY ls.id, ls.sheet_no, ls.plan_url, ls.created_at,
+     GROUP BY ls.id, ls.sheet_no, ls.plan_url, ls.documents_url, ls.survey_class, ls.created_at,
               cp.tie_point_name, cp.province_name, cp.municipality_name,
               u.username
      ORDER BY ls.created_at DESC`

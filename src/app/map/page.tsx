@@ -2,7 +2,20 @@
 
 // Target path: src/app/map/page.tsx
 //
-// ADD PLAN LINK WIRING (this pass): AttributeTable's new inline
+// DOCUMENTS LINK + SURVEY CLASS WIRING (this pass): AttributeTable's two
+// newer inline controls — "Add link" in the Documents column
+// (AddDocumentsLinkControl) and "Set class" in the Class column
+// (AddSurveyClassControl) — are now wired up here via
+// handleUpdateDocumentsUrl and handleUpdateSurveyClass, passed down as
+// onUpdateDocumentsUrl / onUpdateSurveyClass. Same pattern as
+// handleUpdatePlanUrl/handleUpdateSurveyNo: PATCH /api/lot-sheets/[id],
+// then on success optimistically patch every currently-loaded feature
+// belonging to that sheetId so the table updates immediately with no
+// refetch. Both only ever fire from a sheet that has no existing value
+// yet (AttributeTable itself gates the control on that — see its own
+// file), same as the Plan link control.
+//
+// ADD PLAN LINK WIRING (earlier pass): AttributeTable's inline
 // "Add link" control (sheets list, Plan column — see its own file-top
 // comment) is wired up here via handleUpdatePlanUrl. It PATCHes
 // /api/lot-sheets/[id] with the new planUrl, then — on success —
@@ -689,7 +702,7 @@ function MapViewerPageInner() {
     });
   }
 
-  // NEW — Called by AttributeTable's inline "Add link" control (sheets
+  // Called by AttributeTable's inline "Add link" control (sheets
   // list, Plan column) when the user saves a plan URL for a sheet that
   // had none yet. PATCHes /api/lot-sheets/[id]; on success, patches
   // planUrl onto every currently-loaded feature belonging to that sheetId
@@ -723,7 +736,7 @@ function MapViewerPageInner() {
     });
   }
 
-    // Called by AttributeTable's inline "Add survey no." control (sheets list
+  // Called by AttributeTable's inline "Add survey no." control (sheets list
   // Survey No. column, and drilled-in breadcrumb). PATCHes
   // /api/lot-sheets/[id] with { surveyNo }. The API only fills lots on that
   // sheet that currently have no survey_no — existing values are left alone.
@@ -760,6 +773,73 @@ function MapViewerPageInner() {
     });
   }
 
+  // NEW — Called by AttributeTable's inline "Add link" control (sheets
+  // list, Documents column, or the drilled-in breadcrumb) when the user
+  // saves a documents URL for a sheet that had none yet. Same shape as
+  // handleUpdatePlanUrl — a single PATCH to /api/lot-sheets/[id], then an
+  // optimistic patch of documentsUrl onto every currently-loaded feature
+  // belonging to that sheetId — just writes to a different field
+  // (documents_url instead of plan_url). Throws on failure so the inline
+  // control can surface the error next to its input instead of failing
+  // silently.
+  async function handleUpdateDocumentsUrl(sheetId: number, documentsUrl: string) {
+    const res = await fetch(`/api/lot-sheets/${sheetId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ documentsUrl }),
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || "Failed to save documents link.");
+    }
+
+    setLayerData((d) => {
+      const next: typeof d = {};
+      for (const [key, feats] of Object.entries(d)) {
+        next[key] = feats.map((f) =>
+          f.properties.sheetId === sheetId
+            ? { ...f, properties: { ...f.properties, documentsUrl } }
+            : f
+        );
+      }
+      return next;
+    });
+  }
+
+  // NEW — Called by AttributeTable's inline "Set class" control (sheets
+  // list Class column, or the drilled-in breadcrumb) when the user picks
+  // "admin" or "private" for a sheet that has no survey_class yet.
+  // survey_class lives directly on lot_sheets and — unlike survey_no —
+  // never cascades down to individual lots, so this is just a straight
+  // PATCH + optimistic patch of surveyClass onto every currently-loaded
+  // feature belonging to that sheetId. Throws on failure so the inline
+  // control can show the error next to its dropdown.
+  async function handleUpdateSurveyClass(sheetId: number, surveyClass: "admin" | "private") {
+    const res = await fetch(`/api/lot-sheets/${sheetId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ surveyClass }),
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || "Failed to save survey class.");
+    }
+
+    setLayerData((d) => {
+      const next: typeof d = {};
+      for (const [key, feats] of Object.entries(d)) {
+        next[key] = feats.map((f) =>
+          f.properties.sheetId === sheetId
+            ? { ...f, properties: { ...f.properties, surveyClass } }
+            : f
+        );
+      }
+      return next;
+    });
+  }
+
   async function handleSearchSelect(result: LotSearchResult) {
     setSearchError(false);
     try {
@@ -779,13 +859,13 @@ function MapViewerPageInner() {
   // login page. Awaiting the fetch first (rather than firing-and-forgetting)
   // means the cookie is actually gone before middleware.ts re-checks auth
   // on the redirect target.
-async function handleLogout() {
-  try {
-    await fetch("/api/auth/logout", { method: "POST" });
-  } finally {
-    window.location.href = "/"; // full page reload — bypasses the client router cache entirely
+  async function handleLogout() {
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } finally {
+      window.location.href = "/"; // full page reload — bypasses the client router cache entirely
+    }
   }
-}
 
   useEffect(() => {
     Object.entries(activeSelections).forEach(([key, sel]) => {
@@ -1213,13 +1293,15 @@ async function handleLogout() {
                   onViewSheet={viewSheetInPanel}
                   onUpdatePlanUrl={handleUpdatePlanUrl}
                   onUpdateSurveyNo={handleUpdateSurveyNo}
+                  onUpdateDocumentsUrl={handleUpdateDocumentsUrl}
+                  onUpdateSurveyClass={handleUpdateSurveyClass}
                 />
               </div>
             )}
           </div>
         )}
       </section>
-       <CreateShapefileModal
+      <CreateShapefileModal
         open={createModalOpen}
         onClose={() => setCreateModalOpen(false)}
       />

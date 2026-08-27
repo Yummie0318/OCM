@@ -1,7 +1,15 @@
-// Target path: src/app/api/lot-sheets/[id]/route.ts
 import { NextResponse } from "next/server";
 import { getPool } from "@/lib/db";
 import { isTraceableGoogleDriveLink, PLAN_LINK_HELP_MESSAGE } from "@/lib/planLink";
+
+// Mirrors the DB CHECK constraint on lot_sheets.survey_class
+// (CHECK (survey_class IN ('admin', 'private'))). Kept here so the API
+// validates the same allowed set before ever hitting the DB.
+const SURVEY_CLASSES = ["admin", "private"] as const;
+type SurveyClass = (typeof SURVEY_CLASSES)[number];
+function isSurveyClass(value: string): value is SurveyClass {
+  return (SURVEY_CLASSES as readonly string[]).includes(value);
+}
 
 export async function GET(
   _request: Request,
@@ -43,20 +51,26 @@ export async function GET(
   });
 }
 
-// PATCH: attach or replace the plan link (plan_url) on an existing sheet,
-// and/or set survey_no on every lot on that sheet that currently has no
-// survey number.
+// PATCH: attach or replace the plan link (plan_url) and/or the documents
+// link (documents_url) on an existing sheet, set survey_no on every lot
+// on that sheet that currently has no survey number, and/or set the
+// sheet's survey_class.
 //
 // Called from AttributeTable's inline controls (sheets list + drilled-in
 // breadcrumb) via handlers in src/app/map/page.tsx.
 //
-// Body may include either or both:
-//   { planUrl?: string, surveyNo?: string }
+// Body may include any combination of:
+//   { planUrl?: string, documentsUrl?: string, surveyNo?: string, surveyClass?: string }
 //
 // planUrl (when present):
 // - Required to be a non-blank, traceable Google Drive/Docs URL
 //   (isTraceableGoogleDriveLink). Same rules as before.
 // - Updates lot_sheets.plan_url only.
+//
+// documentsUrl (when present):
+// - Same rules as planUrl (non-blank, traceable Google Drive/Docs URL).
+// - Updates lot_sheets.documents_url only. Independent of plan_url — a
+//   sheet can have one, both, or neither.
 //
 // surveyNo (when present):
 // - Plain text (not a URL). Trimmed; blank after trim is rejected.
@@ -65,11 +79,18 @@ export async function GET(
 //   number are left alone. This mirrors the "fill missing" intent of the
 //   plan link, but scoped to per-lot columns that may already differ.
 //
+// surveyClass (when present):
+// - Must be exactly "admin" or "private" (matches the DB CHECK
+//   constraint on lot_sheets.survey_class). Any other value is rejected.
+// - Updates lot_sheets.survey_class only.
+//
 // - 400 if the id isn't a valid number, or if a provided field fails
-//   validation (blank planUrl / surveyNo, or non-traceable planUrl).
-// - 400 if the body has neither planUrl nor surveyNo.
+//   validation (blank planUrl/documentsUrl/surveyNo, non-traceable
+//   planUrl/documentsUrl, or an unrecognized surveyClass).
+// - 400 if the body has none of planUrl, documentsUrl, surveyNo, surveyClass.
 // - 404 if no lot_sheets row has that id.
-// - 200 with { ok: true, planUrl?, surveyNo?, updatedLotCount? } on success.
+// - 200 with { ok: true, planUrl?, documentsUrl?, surveyNo?,
+//   updatedLotCount?, surveyClass? } on success.
 export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -83,19 +104,25 @@ export async function PATCH(
 
   const body = await request.json().catch(() => ({}));
   const hasPlanUrl = Object.prototype.hasOwnProperty.call(body, "planUrl");
+  const hasDocumentsUrl = Object.prototype.hasOwnProperty.call(body, "documentsUrl");
   const hasSurveyNo = Object.prototype.hasOwnProperty.call(body, "surveyNo");
+  const hasSurveyClass = Object.prototype.hasOwnProperty.call(body, "surveyClass");
 
-  if (!hasPlanUrl && !hasSurveyNo) {
+  if (!hasPlanUrl && !hasDocumentsUrl && !hasSurveyNo && !hasSurveyClass) {
     return NextResponse.json(
-      { error: "Provide planUrl and/or surveyNo." },
+      { error: "Provide planUrl, documentsUrl, surveyNo, and/or surveyClass." },
       { status: 400 }
     );
   }
 
   const planUrl =
     hasPlanUrl && typeof body.planUrl === "string" ? body.planUrl.trim() : null;
+  const documentsUrl =
+    hasDocumentsUrl && typeof body.documentsUrl === "string" ? body.documentsUrl.trim() : null;
   const surveyNo =
     hasSurveyNo && typeof body.surveyNo === "string" ? body.surveyNo.trim() : null;
+  const surveyClass =
+    hasSurveyClass && typeof body.surveyClass === "string" ? body.surveyClass.trim().toLowerCase() : null;
 
   if (hasPlanUrl) {
     if (!planUrl) {
@@ -106,8 +133,24 @@ export async function PATCH(
     }
   }
 
+  if (hasDocumentsUrl) {
+    if (!documentsUrl) {
+      return NextResponse.json({ error: "Documents link is required." }, { status: 400 });
+    }
+    if (!isTraceableGoogleDriveLink(documentsUrl)) {
+      return NextResponse.json({ error: PLAN_LINK_HELP_MESSAGE }, { status: 400 });
+    }
+  }
+
   if (hasSurveyNo && !surveyNo) {
     return NextResponse.json({ error: "Survey number is required." }, { status: 400 });
+  }
+
+  if (hasSurveyClass && (!surveyClass || !isSurveyClass(surveyClass))) {
+    return NextResponse.json(
+      { error: `Survey class must be one of: ${SURVEY_CLASSES.join(", ")}.` },
+      { status: 400 }
+    );
   }
 
   const pool = getPool();
@@ -135,6 +178,24 @@ export async function PATCH(
       returnedPlanUrl = planUrl;
     }
 
+    let returnedDocumentsUrl: string | undefined;
+    if (hasDocumentsUrl && documentsUrl) {
+      await client.query(
+        `UPDATE lot_sheets SET documents_url = $1 WHERE id = $2`,
+        [documentsUrl, sheetId]
+      );
+      returnedDocumentsUrl = documentsUrl;
+    }
+
+    let returnedSurveyClass: string | undefined;
+    if (hasSurveyClass && surveyClass) {
+      await client.query(
+        `UPDATE lot_sheets SET survey_class = $1 WHERE id = $2`,
+        [surveyClass, sheetId]
+      );
+      returnedSurveyClass = surveyClass;
+    }
+
     let updatedLotCount: number | undefined;
     if (hasSurveyNo && surveyNo) {
       // Only fill lots that currently have no survey number — do not
@@ -155,6 +216,8 @@ export async function PATCH(
     return NextResponse.json({
       ok: true,
       ...(returnedPlanUrl !== undefined ? { planUrl: returnedPlanUrl } : {}),
+      ...(returnedDocumentsUrl !== undefined ? { documentsUrl: returnedDocumentsUrl } : {}),
+      ...(returnedSurveyClass !== undefined ? { surveyClass: returnedSurveyClass } : {}),
       ...(surveyNo !== null && hasSurveyNo ? { surveyNo, updatedLotCount } : {}),
     });
   } catch (err) {

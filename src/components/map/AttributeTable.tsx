@@ -1,224 +1,5 @@
 "use client";
 
-// Target path: src/components/map/AttributeTable.tsx
-//
-// BREADCRUMB PLAN LINK (earlier pass): the drilled-into-a-sheet breadcrumb
-// ("Sheets / {sheetNo} — {municipality}, {province} · Encoded by
-// {username}") previously had no way to see or attach that sheet's plan
-// link — the only place to do that was the sheets-list Plan column, which
-// meant going back to "Sheets" first. The breadcrumb now has its own Plan
-// segment, reusing the exact same <PlanLink> / <AddPlanLinkControl>
-// components the sheets list already uses: if the drilled-in sheet has a
-// planUrl, it renders the "View" link; if it doesn't (and sheetId +
-// onUpdatePlanUrl are both available), it renders the same inline
-// "Add link" control. Saving through either place updates the same
-// planUrl on the same sheetId, so both views always agree — there's only
-// ever one plan link per sheet, just two places to see/edit it now.
-//
-// SHEET SURVEY NO (this pass): survey number is per-lot text (not a
-// link), but lots on the same sheet often share one. Like plan links, the
-// sheets list and drilled-in breadcrumb can now attach a survey number
-// for every lot on that sheet that still has none. Saving calls
-// onUpdateSurveyNo(sheetId, surveyNo) → PATCH /api/lot-sheets/[id] with
-// { surveyNo }, which only UPDATEs lots where survey_no IS NULL or
-// blank — existing values are never overwritten. SheetGroup derives a
-// display surveyNo (first non-empty among its lots) and hasMissingSurveyNo
-// so the UI can show the current value and/or an "Add survey no." control.
-//
-// GOOGLE DRIVE VALIDATION (earlier pass): the "Add link" plan-link control
-// (see ADD PLAN LINK note below) now rejects anything that isn't a
-// traceable Google Drive/Docs URL — validated client-side here via
-// isTraceableGoogleDriveLink (src/lib/planLink.ts) before it's even sent
-// to the parent's onUpdatePlanUrl, so the user gets instant feedback
-// instead of a round-trip error. The same rule is enforced again
-// server-side in the PATCH route (see its own file), since a client
-// check alone can always be bypassed by hitting the API directly — this
-// client check is purely a UX nicety.
-//
-// ADD PLAN LINK (earlier pass): the sheets-list Plan column now lets the
-// user attach a plan link to a sheet that doesn't have one yet, instead
-// of just showing "—". Each SheetGroup now carries `sheetId` (the numeric
-// lot_sheets FK, not the display sheetNo) so the new `onUpdatePlanUrl`
-// prop can tell the parent exactly which sheet to update. When a sheet
-// has no planUrl and the parent has passed onUpdatePlanUrl, the Plan cell
-// renders <AddPlanLinkControl>: a small "Add link" button that expands
-// into an inline URL input + Save/Cancel. Saving calls
-// onUpdatePlanUrl(sheetId, url), which the parent uses to PATCH
-// /api/lot-sheets/[id] and patch the loaded features' planUrl locally so
-// this table reflects it immediately (no refetch). Errors from the save
-// are shown inline next to the input rather than swallowed. The whole
-// cell still calls stopPropagation so typing/clicking in it never
-// triggers the row's own "drill into sheet" onClick.
-//
-// SHEET PREVIEW BUTTON (earlier pass): each row in the sheets list now has a
-// dedicated "Preview" column with an eye-icon button. Clicking it calls
-// the new `onViewSheet` prop with that sheet's full lot list (id, no,
-// province/municipality, all lots) — this is what lets the parent show a
-// whole-sheet preview (every lot's polygon + a lot list) in
-// LotDetailPanel, separate from drilling into the sheet's lots table
-// here. The button calls stopPropagation so clicking it doesn't also
-// trigger the row's own onClick (which still just drills in, unchanged).
-// The column itself is only rendered when a caller actually passes
-// onViewSheet, so existing usages that don't care about this still look
-// exactly as before.
-//
-// SYNC WITH MAP CLICKS (earlier pass): the parent now also updates the
-// `selectedId` prop when a polygon is clicked directly on the map (see
-// MapCanvas's new `onPolygonClick`), not just when a table row is
-// clicked. Two additions make that useful here instead of silently
-// no-oping when the matching row isn't currently visible:
-//   1. If `selectedId` changes to a lot that belongs to a sheet other than
-//      whichever one is currently drilled into (or no sheet is drilled
-//      into at all), the table auto-expands that lot's sheet — same as
-//      clicking that sheet's row in the sheets list would. Skipped while
-//      a search is active, since search results already show a flat
-//      cross-sheet list with no drill-down step needed.
-//   2. Once the matching row is part of whatever's currently rendered
-//      (a drilled sheet's LotsTable, or search results), it's scrolled
-//      into view. This lives inside LotsTable itself (see its own
-//      comment) since that's the component that actually owns the row
-//      DOM nodes.
-// This does NOT open LotDetailPanel — that still only happens via the
-// "View Lot Details" button in the map popup (see MapCanvas /
-// LotDetailPanel), completely unchanged by this pass.
-//
-// ENCODED BY (earlier pass): moved from a per-lot column to a per-SHEET
-// display. "Encoded By" (properties.encodedBy, sourced from
-// lot_sheets.created_by -> users.username in /api/map/lots) is a fact
-// about the SHEET, not the lot — every lot on the same sheet has the same
-// value, since lots don't carry their own created_by column. Previously it
-// was rendered as a column on every lot row (repeating identically down
-// the table), which read like a per-lot attribute. It now shows up:
-//   - once per sheet, as a column in SheetsTable (the sheets-list
-//     view), and
-//   - in the breadcrumb once you've drilled into a sheet ("Sheet {no} —
-//     {municipality}, {province} · Encoded by {username}").
-// It's no longer a column in LotsTable / LOT_COLUMNS. Search-by-encoder
-// still works exactly as before (matchesLotQuery still reads
-// p.encodedBy off each lot feature) — that's just how the underlying data
-// arrives per-feature; only the *display* location moved.
-//
-// SHEETS-ROW AFFORDANCE (earlier pass): the per-row "view lots" chevron
-// icon + themed Tooltip column has been removed. The whole row is still
-// the click target (onClick on the <tr>), and a plain native
-// `title="Click to view lots"` on the <tr> gives the hover tooltip
-// instead — one fewer column, simpler markup, same "click to drill in"
-// affordance.
-//
-// COMPACT HEADER (earlier pass): the breadcrumb row and the color-selection
-// toolbar used to be two separate conditionally-rendered bars stacked on
-// top of each other — and the color toolbar only mounted once something
-// was checked, so checking the first row inserted a whole new row and
-// shoved everything below it down. Both are now ONE row: breadcrumb (or
-// "Search results" label) on the left, color toolbar on the right. That
-// row renders whenever a lots table is visible (drilled into a sheet, or
-// search results) — the toolbar itself is always mounted, just faded/
-// disabled with a "Select lots to color" hint until something's checked,
-// so activating it never changes the layout. On the plain sheets list
-// (no drill-down, no search, no checkboxes) this row doesn't render at
-// all. Net effect: max 2 stacked bars above the table instead of 3, and
-// nothing jumps when you select a row. Swatches/padding also tightened
-// slightly (17px -> 16px swatches, py-1.5 -> py-1) per the same pass.
-//
-// TOOLTIPS (earlier pass): every native `title=""` attribute in this file
-// has been replaced with the same themed hover/focus tooltip used
-// elsewhere in the app (dark pill, small arrow, positioned via
-// bottom-full/top-full so it never gets clipped by the table's own
-// scroll container). See the `Tooltip` component below — it's a plain
-// wrapper around its children, so swapping it in never changed any
-// click/select logic, only what shows up on hover. Native `title`
-// tooltips are slow to appear, can't be styled, and don't reliably show
-// on touch devices anyway, so nothing is lost on mobile by dropping them.
-// The one exception is the per-row "Click to view lots" cue on the
-// sheets table: instead of a tooltip on the entire <tr> (awkward to
-// anchor and pointless on touch, where there's no hover), that's now a
-// small chevron icon at the end of the row with its own tooltip — same
-// affordance, clearer target.
-//
-// MOBILE SCROLLING (earlier pass): the scroll container now sets
-// `WebkitOverflowScrolling: "touch"` (momentum scrolling on older iOS
-// Safari) and `overscrollBehavior: "contain"` (so scrolling to the end of
-// the table doesn't bubble into scrolling the page behind it — a common
-// cause of "the table feels stuck" on iPhone). NOTE: the *height* of this
-// panel — the actual "I can't see the data below it" bug — is controlled
-// by the parent (src/app/map/page.tsx), which drags/persists a pixel
-// height via mouse events only. That's fixed separately in page.tsx
-// (touch-drag support for the resize handle); nothing in this file can
-// fix that on its own since this component doesn't own its own height.
-//
-// The table now opens on a SHEETS view: one row per lot_sheet, grouped
-// client-side from whatever `features` the parent has already loaded (no
-// extra request — every LotFeature already carries sheetId/sheetNo/planUrl,
-// see /api/map/lots). Clicking a sheet row drills into that sheet's
-// individual lots (the original flat table, minus the now-redundant
-// "Sheet No." column), with a breadcrumb bar to go back and a link out to
-// the plan (plan_url) if one exists.
-//
-// Grouping key is sheetId (numeric FK), not sheetNo (display string) — two
-// sheets could in principle share a sheet_no, sheetId can't collide.
-//
-// Province/Municipality/Encoded By on the sheets view all come from the
-// first lot in each group (every lot in a sheet shares the same tie point
-// and encoder, so they're identical across the group) — see /api/map/lots,
-// which derives them from the sheet's control point / lot_sheets row.
-//
-// UX notes (earlier pass):
-// - There is now a SINGLE totals readout — the top SummaryBar — instead of
-//   a top bar + a duplicate footer row inside the table. The per-table
-//   footer row was removed because it always said the same thing the top
-//   bar already said.
-// - The SummaryBar is context-aware: on the sheets list it shows the
-//   overall total (all sheets/lots currently loaded); once you drill into
-//   a sheet, it switches to that sheet's own lot count/area instead, so
-//   the number on screen always matches what you're actually looking at.
-// - The breadcrumb no longer repeats the lot count/area (that's the top
-//   bar's job now) — it's "Sheet {no} — {municipality}, {province}",
-//   plus the encoder (see ENCODED BY above) and now the Plan link/control
-//   (see BREADCRUMB PLAN LINK above).
-// - Search bar: searches the flat `features` list directly (lot no, owner,
-//   barangay, municipality, survey no, surveyor, patent no, remarks,
-//   encoded-by username, and sheet no), so it finds lots across every
-//   sheet at once — not just whatever sheet you happen to be drilled into.
-//   It lives inline in the SummaryBar's row (via `rightSlot`) rather than
-//   its own full-width row, so it stays compact. While a query is active,
-//   the sheets/lots drill-down is bypassed in favor of a flat results
-//   table with a "Sheet No." column added back in (since results can span
-//   multiple sheets), and the top summary numbers switch to
-//   match-count/area. Clearing the query returns you to exactly the view
-//   you were on before.
-//
-// - Color selection: in either lots view (a drilled-in sheet, or cross-
-//   sheet search results), each row has a checkbox and there's a "select
-//   all visible" checkbox in the header — scoped to whatever's currently
-//   shown, so searching "titled" then selecting all only grabs those
-//   matches. The color toolbar (see COMPACT HEADER above) sits in the
-//   combined header row and applies a color to every selected lot in a
-//   single action via `onSetLotColors`. Actually painting the polygons on
-//   the map is the parent's job — this component just reports which lot
-//   ids got which color. `lotColors` (also owned by the parent) is read
-//   back here to show a small dot per row so it's obvious which lots are
-//   already colored.
-//
-// - ROW COLOR MATCHING: a colored lot's row gets a translucent background
-//   tint of its own assigned color (via hexToRgba), not just a small dot —
-//   so the table visually mirrors the polygon fill on the map at a
-//   glance. A colored-and-selected row (clicked on the map/table) gets a
-//   stronger tint plus the usual accent left-edge selection marker, so
-//   "this is the lot I clicked" and "this is what color it is" both stay
-//   visible at once instead of one state hiding the other.
-//
-// - THEME: the table reads the same `--sb-*` tokens the sidebar uses via
-//   useSidebarTheme()/vars, so flipping dark mode from the sidebar's
-//   account menu re-skins the table in the same motion. Requires an
-//   ancestor <SidebarThemeProvider> (see SidebarThemeContext.tsx).
-//   Lot-color tints (hexToRgba) are unaffected by theme on purpose: those
-//   colors are user-assigned data, not chrome.
-//
-// - DENSITY / VISUAL PASS: retuned for an "Apple-style" data table — a
-//   calm, dense grid closer to macOS Finder/Numbers than a generic HTML
-//   table (tabular-nums, hairline rules via color-mix, tightened row
-//   height, pill-radius controls, custom checkbox skin).
-
 import React from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { LotFeature } from "@/lib/geo";
@@ -228,8 +9,6 @@ import { useSidebarTheme } from "@/components/map/SidebarThemeContext";
 import { uiFont } from "@/components/map/sidebarTheme";
 import { Table2, X, ChevronLeft, ExternalLink, Search, Palette, Check, Eye, Link2 } from "lucide-react";
 
-// Presets are a starting point, not a hard limit — the custom swatch (a
-// native color input) covers anything outside this set.
 const COLOR_PRESETS: { label: string; value: string }[] = [
   { label: "Titled", value: "#22c55e" },
   { label: "Untitled", value: "#ef4444" },
@@ -238,17 +17,24 @@ const COLOR_PRESETS: { label: string; value: string }[] = [
   { label: "Flagged", value: "#a855f7" },
 ];
 
-// Hairline helper — draws borders at reduced opacity against the theme's
-// border token so dividers read as fine lines rather than heavy rules,
-// the way native macOS lists separate rows.
 const HAIRLINE = "color-mix(in srgb, var(--sb-border) 70%, transparent)";
 const HAIRLINE_SOFT = "color-mix(in srgb, var(--sb-border) 45%, transparent)";
 
-// Converts a "#rgb" or "#rrggbb" hex string into an rgba() string at the
-// given alpha, so a row's background can be tinted with the lot's own
-// assigned color instead of a generic indigo highlight. Falls back to a
-// neutral gray if parsing fails (e.g. an unexpected/malformed hex from the
-// custom color input) rather than throwing.
+// Coerces sheetId to a real number regardless of whether the API returned
+// it as a JS number or a numeric string (e.g. some Postgres drivers/column
+// types serialize integer/bigint columns as strings in JSON). Without
+// this, a sheetId of "42" (string) would fail `typeof === "number"` checks
+// and every inline "Add ___" control on that sheet would silently
+// disappear, even though the sheet is perfectly valid.
+function toSheetId(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "") {
+    const n = Number(value);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
 function hexToRgba(hex: string, alpha: number): string {
   const clean = hex.replace("#", "").trim();
   const full = clean.length === 3
@@ -262,12 +48,6 @@ function hexToRgba(hex: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-// Themed hover/focus tooltip — replaces every native title="" in this
-// file. Purely a wrapper: it renders `children` unchanged and adds an
-// absolutely-positioned pill above (or below) them on hover/focus. Each
-// instance manages its own show/hide state locally rather than lifting it
-// up, since a table can have dozens of these on screen and there's no
-// reason for them to share state.
 function Tooltip({
   label,
   children,
@@ -314,10 +94,6 @@ function Tooltip({
   );
 }
 
-// A whole sheet's worth of lots, handed up via onViewSheet when the
-// per-row preview button is clicked. Deliberately a plain object (not the
-// internal SheetGroup type) so callers outside this file don't need to
-// know about SheetGroup's other bookkeeping fields (key, totalArea, etc).
 export interface SheetPreviewRequest {
   sheetNo: string;
   province: string | null;
@@ -335,82 +111,36 @@ interface Props {
   hasError?: boolean;
   filterLabel?: string | null;
   onClearFilter?: () => void;
-  // Map of lot id (stringified) -> hex color, owned by the parent. Read
-  // here to tint each row's background and show a small dot per row; the
-  // parent is responsible for actually styling the polygon layer on the
-  // map with it.
   lotColors?: Record<string, string>;
-  // Called with every currently-checked lot id plus the chosen color (or
-  // null to clear) when the user picks a swatch in the selection toolbar.
   onSetLotColors?: (lotIds: Array<string | number>, color: string | null) => void;
-  // Called when the "Preview" eye button on a sheet row (sheets-list
-  // view only) is clicked, with that sheet's full lot list. Intended for
-  // the parent to show a whole-sheet preview (every lot's polygon + a lot
-  // list) in LotDetailPanel — separate from the row's own click, which
-  // still just drills into that sheet's lots table here. The Preview
-  // column only renders when this is provided.
   onViewSheet?: (sheet: SheetPreviewRequest) => void;
-  // Called when the user saves a plan link via the inline "Add link"
-  // control — either the sheets list (Plan column) or the drilled-in
-  // sheet's breadcrumb (see BREADCRUMB PLAN LINK above) — for a sheet
-  // that had no planUrl yet. `sheetId` is the numeric lot_sheets FK. The
-  // URL has already passed isTraceableGoogleDriveLink here before this
-  // is ever called (see AddPlanLinkControl) — the parent is responsible
-  // for persisting it (e.g. PATCH /api/lot-sheets/[id], which
-  // re-validates server-side) and for updating planUrl on the loaded
-  // features so this table reflects it immediately. A rejected promise
-  // shows its message inline next to the input. The control only renders
-  // when this is provided AND the group's sheetId is known.
   onUpdatePlanUrl?: (sheetId: number, planUrl: string) => Promise<void>;
-  // Called when the user saves a survey number via the inline "Add survey
-  // no." control — sheets list (Survey No. column) or drilled-in
-  // breadcrumb — for lots on that sheet that still have no survey_no.
-  // `sheetId` is the numeric lot_sheets FK. The parent PATCHes
-  // /api/lot-sheets/[id] with { surveyNo }; the API only fills lots where
-  // survey_no is null/blank and leaves existing values alone. Parent
-  // should also patch loaded features' surveyNo for lots that were empty
-  // so this table updates without a refetch. Control only renders when
-  // this is provided, sheetId is known, and the group has at least one
-  // lot missing a survey number.
   onUpdateSurveyNo?: (sheetId: number, surveyNo: string) => Promise<void>;
+  onUpdateDocumentsUrl?: (sheetId: number, documentsUrl: string) => Promise<void>;
+  onUpdateSurveyClass?: (sheetId: number, surveyClass: "admin" | "private") => Promise<void>;
 }
 
 interface SheetGroup {
   key: string;
-  // Numeric lot_sheets FK, when the API provided one — needed so
-  // onUpdatePlanUrl knows exactly which sheet row to update. Falls back
-  // to null for the rare "unsheeted" grouping bucket (see the `key`
-  // derivation below), where there's no real sheet row to update.
   sheetId: number | null;
   sheetNo: string;
   planUrl: string | null;
+  documentsUrl: string | null;
+  surveyClass: "admin" | "private" | null;
   province: string | null;
   municipality: string | null;
-  // Sheet-level fact (lot_sheets.created_by -> users.username via
-  // /api/map/lots), taken from the first lot in the group since every lot
-  // on a sheet shares it. Displayed once per sheet (SheetsTable column +
-  // breadcrumb) instead of repeated on every lot row — see ENCODED BY note
-  // at the top of the file.
   encodedBy: string | null;
-  // First non-empty surveyNo among lots on this sheet (display only).
-  // Lots may already differ; hasMissingSurveyNo tracks whether any lot
-  // still lacks a value so the "Add survey no." control can appear.
   surveyNo: string | null;
   hasMissingSurveyNo: boolean;
   lots: LotFeature[];
   totalArea: number;
 }
 
-// "Encoded By" is intentionally NOT in this list — it's a sheet-level
-// fact, not a per-lot one. It's shown once per sheet instead (SheetsTable's
-// own "Encoded By" column, and the breadcrumb once drilled in) — see
-// ENCODED BY note at the top of the file.
 const LOT_COLUMNS = [
   "Lot No.",
   "Owner",
   "Barangay",
   "Municipality",
-  "Survey No.",
   "Date Surveyed",
   "Surveyor",
   "Area (sq.m.)",
@@ -418,21 +148,12 @@ const LOT_COLUMNS = [
   "Remarks",
 ];
 
-// Numeric-ish columns get tabular-nums + right alignment so figures line
-// up like a native spreadsheet column instead of ragged left-aligned text.
 const NUMERIC_COLUMNS = new Set(["Area (sq.m.)"]);
 
 function formatArea(n: number) {
   return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
-// dateSurveyed comes back as a full ISO timestamp (e.g.
-// "2026-01-26T16:00:00.000Z") even though it's really just a date with no
-// meaningful time component. Rendering that raw string, or letting
-// toLocaleDateString convert it to the browser's local timezone, both
-// cause the day to visibly shift (16:00 UTC + PH's UTC+8 rolls into the
-// next calendar day). Reading the UTC fields directly keeps the date
-// exactly as stored, formatted as e.g. "January 26, 2026".
 function formatDate(value: string | null | undefined): string {
   if (!value) return "—";
   const d = new Date(value);
@@ -445,13 +166,6 @@ function formatDate(value: string | null | undefined): string {
   });
 }
 
-// Checks a single lot against a lowercased search query across every
-// field someone would plausibly search by, including sheet no and encoder
-// username — this is what lets the search reach across sheets instead of
-// being scoped to whichever one is currently expanded. (encodedBy is still
-// read per-feature here purely because that's how the API shapes the data
-// — it's a display decision, not a data one, that moved it out of the lot
-// row UI; search-by-encoder still works the same as before.)
 function matchesLotQuery(f: LotFeature, query: string): boolean {
   const p = f.properties;
   const haystack = [
@@ -485,11 +199,6 @@ function PlanLink({ url, stopPropagation, label }: { url: string; stopPropagatio
   );
 }
 
-// Inline "attach a survey number" control — same UX shape as
-// AddPlanLinkControl, but plain text (no Google Drive validation). Used
-// on the sheets-list Survey No. column and the drilled-in breadcrumb.
-// Saving calls onSave(sheetId, surveyNo); the parent PATCHes the sheet
-// API, which only fills lots that currently have no survey_no.
 function AddSurveyNoControl({
   sheetId,
   onSave,
@@ -527,7 +236,7 @@ function AddSurveyNoControl({
 
   if (!editing) {
     return (
-      <Tooltip label="Set survey number on all lots on this sheet that don't have one yet">
+      <Tooltip label="Set survey number">
         <button
           type="button"
           onClick={() => setEditing(true)}
@@ -589,22 +298,6 @@ function AddSurveyNoControl({
   );
 }
 
-// Inline "attach a plan link" control. Used in two places now: the
-// sheets-list Plan column, and the drilled-in-sheet breadcrumb (see
-// BREADCRUMB PLAN LINK above) — both pass the same sheetId/onSave, so
-// saving through either one updates the same underlying sheet. Starts as
-// a small ghost button ("Add link"); clicking it swaps in a compact URL
-// input + Save/Cancel. Enter saves, Escape cancels.
-//
-// The link is required to be a real Google Drive/Docs URL pointing at a
-// specific file or folder (see isTraceableGoogleDriveLink in
-// src/lib/planLink.ts) — checked here BEFORE calling onSave, so a bad
-// link never even reaches the network. This is purely a UX nicety: the
-// same rule is re-checked server-side in the PATCH route, since a client
-// check can always be bypassed. Both a local validation failure and a
-// rejected onSave (e.g. the server-side check failing, or a network
-// error) surface the same way: a small red "!" with the message in its
-// own tooltip, right next to the input.
 function AddPlanLinkControl({
   sheetId,
   onSave,
@@ -710,12 +403,202 @@ function AddPlanLinkControl({
   );
 }
 
-// Custom checkbox — a real <input type="checkbox"> (kept for a11y, focus
-// ring, and keyboard toggling) with the native box hidden and a rounded
-// square drawn in its place, checked state shown with a small check glyph.
-// Matches the rest of the chrome instead of each browser's default skin.
-// No longer takes a `title` prop — callers that need a tooltip wrap this
-// in <Tooltip> instead (see the header "select all" checkbox below).
+function AddDocumentsLinkControl({
+  sheetId,
+  onSave,
+}: {
+  sheetId: number;
+  onSave: (sheetId: number, documentsUrl: string) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function cancel() {
+    setEditing(false);
+    setValue("");
+    setError(null);
+  }
+
+  async function handleSave() {
+    const trimmed = value.trim();
+    if (!trimmed) return;
+
+    if (!isTraceableGoogleDriveLink(trimmed)) {
+      setError(PLAN_LINK_HELP_MESSAGE);
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    try {
+      await onSave(sheetId, trimmed);
+      setEditing(false);
+      setValue("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't save link.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!editing) {
+    return (
+      <Tooltip label="Add a Google Drive link to this sheet's documents">
+        <button
+          type="button"
+          onClick={() => setEditing(true)}
+          className="inline-flex items-center gap-1 text-[11.5px] font-medium text-[var(--sb-text-faint)] transition-colors hover:text-[var(--sb-accent)]"
+        >
+          <Link2 size={11} />
+          Add link
+        </button>
+      </Tooltip>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-1">
+      <input
+        autoFocus
+        type="url"
+        value={value}
+        disabled={saving}
+        onChange={(e) => {
+          setValue(e.target.value);
+          if (error) setError(null);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") handleSave();
+          if (e.key === "Escape") cancel();
+        }}
+        placeholder="Paste Google Drive link…"
+        className="w-[168px] rounded-md px-1.5 py-[3px] text-[11px] outline-none"
+        style={{
+          background: "var(--sb-bg)",
+          boxShadow: `inset 0 0 0 1px ${error ? "#ef4444" : HAIRLINE}`,
+          color: "var(--sb-text)",
+        }}
+      />
+      <button
+        type="button"
+        onClick={handleSave}
+        disabled={saving || !value.trim()}
+        className="text-[10.5px] font-semibold text-[var(--sb-accent)] disabled:opacity-40"
+      >
+        {saving ? "…" : "Save"}
+      </button>
+      <button
+        type="button"
+        onClick={cancel}
+        disabled={saving}
+        className="text-[10.5px] text-[var(--sb-text-faint)]"
+      >
+        Cancel
+      </button>
+      {error && (
+        <Tooltip label={error}>
+          <span className="flex h-[14px] w-[14px] flex-shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-red-500">
+            !
+          </span>
+        </Tooltip>
+      )}
+    </div>
+  );
+}
+
+function AddSurveyClassControl({
+  sheetId,
+  onSave,
+}: {
+  sheetId: number;
+  onSave: (sheetId: number, surveyClass: "admin" | "private") => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState<"admin" | "private">("private");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function cancel() {
+    setEditing(false);
+    setError(null);
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    setError(null);
+    try {
+      await onSave(sheetId, value);
+      setEditing(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't save survey class.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!editing) {
+    return (
+      <Tooltip label="Set this sheet's survey class (admin or private)">
+        <button
+          type="button"
+          onClick={() => setEditing(true)}
+          className="inline-flex items-center gap-1 text-[11.5px] font-medium text-[var(--sb-text-faint)] transition-colors hover:text-[var(--sb-accent)]"
+        >
+          Set class
+        </button>
+      </Tooltip>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+      <select
+        autoFocus
+        value={value}
+        disabled={saving}
+        onChange={(e) => setValue(e.target.value as "admin" | "private")}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") cancel();
+        }}
+        className="rounded-md px-1.5 py-[3px] text-[11px] outline-none"
+        style={{
+          background: "var(--sb-bg)",
+          boxShadow: `inset 0 0 0 1px ${error ? "#ef4444" : HAIRLINE}`,
+          color: "var(--sb-text)",
+        }}
+      >
+        <option value="admin">Admin</option>
+        <option value="private">Private</option>
+      </select>
+      <button
+        type="button"
+        onClick={handleSave}
+        disabled={saving}
+        className="text-[10.5px] font-semibold text-[var(--sb-accent)] disabled:opacity-40"
+      >
+        {saving ? "…" : "Save"}
+      </button>
+      <button
+        type="button"
+        onClick={cancel}
+        disabled={saving}
+        className="text-[10.5px] text-[var(--sb-text-faint)]"
+      >
+        Cancel
+      </button>
+      {error && (
+        <Tooltip label={error}>
+          <span className="flex h-[14px] w-[14px] flex-shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-red-500">
+            !
+          </span>
+        </Tooltip>
+      )}
+    </div>
+  );
+}
+
 function Checkbox({
   checked,
   onChange,
@@ -747,12 +630,6 @@ function Checkbox({
   );
 }
 
-// Color-selection toolbar. Always mounted whenever a lots table is on
-// screen (drilled sheet or search results) — it doesn't wait for a
-// selection to exist. With nothing checked it just renders faded and
-// non-interactive with a short hint, so ticking the first checkbox
-// activates it in place instead of inserting a whole new row and pushing
-// everything else in the header stack down.
 function ColorToolbar({
   selectedCount,
   onApplyColor,
@@ -831,6 +708,8 @@ export default function AttributeTable({
   onViewSheet,
   onUpdatePlanUrl,
   onUpdateSurveyNo,
+  onUpdateDocumentsUrl,
+  onUpdateSurveyClass,
 }: Props) {
   const { vars } = useSidebarTheme();
   const [expandedSheetKey, setExpandedSheetKey] = useState<string | null>(null);
@@ -838,9 +717,6 @@ export default function AttributeTable({
   const normalizedQuery = searchQuery.trim().toLowerCase();
   const [colorSelectedIds, setColorSelectedIds] = useState<Set<string>>(new Set());
 
-  // Search always runs against the flat `features` list — not sheetGroups,
-  // not expandedSheet.lots — so a match in any sheet shows up regardless
-  // of which sheet (if any) is currently drilled into.
   const searchResults = useMemo(() => {
     if (!normalizedQuery) return null;
     const lots = features.filter((f) => matchesLotQuery(f, normalizedQuery));
@@ -853,8 +729,8 @@ export default function AttributeTable({
   const sheetGroups = useMemo<SheetGroup[]>(() => {
     const map = new Map<string, SheetGroup>();
     for (const f of features) {
-      const key =
-        f.properties.sheetId != null ? `id:${f.properties.sheetId}` : `no:${f.properties.sheetNo ?? "unsheeted"}`;
+      const sheetId = toSheetId(f.properties.sheetId);
+      const key = sheetId != null ? `id:${sheetId}` : `no:${f.properties.sheetNo ?? "unsheeted"}`;
       const area = Number(f.properties.areaSqm) || 0;
       const existing = map.get(key);
       const rawSurvey = f.properties.surveyNo;
@@ -868,9 +744,11 @@ export default function AttributeTable({
       } else {
         map.set(key, {
           key,
-          sheetId: typeof f.properties.sheetId === "number" ? f.properties.sheetId : null,
+          sheetId,
           sheetNo: f.properties.sheetNo || "—",
           planUrl: f.properties.planUrl,
+          documentsUrl: (f.properties as any).documentsUrl ?? null,
+          surveyClass: (f.properties as any).surveyClass ?? null,
           province: f.properties.province,
           municipality: f.properties.municipality,
           encodedBy: f.properties.encodedBy,
@@ -881,8 +759,23 @@ export default function AttributeTable({
         });
       }
     }
-    return Array.from(map.values()).sort((a, b) => a.sheetNo.localeCompare(b.sheetNo));
-  }, [features]);
+    const result = Array.from(map.values()).sort((a, b) => a.sheetNo.localeCompare(b.sheetNo));
+
+    // TEMP DEBUG — remove once the Survey No. button issue is confirmed fixed.
+    console.log(
+      "DEBUG sheetGroups:",
+      result.map((g) => ({
+        sheetNo: g.sheetNo,
+        sheetId: g.sheetId,
+        surveyNo: g.surveyNo,
+        hasMissingSurveyNo: g.hasMissingSurveyNo,
+      })),
+      "onUpdateSurveyNo type:",
+      typeof onUpdateSurveyNo
+    );
+
+    return result;
+  }, [features, onUpdateSurveyNo]);
 
   useEffect(() => {
     if (expandedSheetKey && !sheetGroups.some((g) => g.key === expandedSheetKey)) {
@@ -890,13 +783,6 @@ export default function AttributeTable({
     }
   }, [expandedSheetKey, sheetGroups]);
 
-  // Auto-drill into whichever sheet owns `selectedId` when it changes to a
-  // lot the currently-expanded sheet doesn't contain — this is what makes
-  // clicking a polygon directly on the map (see MapCanvas's
-  // onPolygonClick) actually bring that lot's row into view here, instead
-  // of silently doing nothing because the sheets list is still showing.
-  // Skipped while searching: search results are already a flat cross-sheet
-  // list, so there's no drill-down step to perform.
   useEffect(() => {
     if (selectedId == null || isSearching) return;
     const idStr = String(selectedId);
@@ -909,9 +795,6 @@ export default function AttributeTable({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId, isSearching, sheetGroups]);
 
-  // Drop any checked ids that no longer exist in the current feature set
-  // (e.g. the sidebar filter changed underneath the table) so the "select
-  // all" checkbox and the toolbar count don't go stale.
   useEffect(() => {
     setColorSelectedIds((prev) => {
       if (prev.size === 0) return prev;
@@ -935,9 +818,6 @@ export default function AttributeTable({
     });
   }
 
-  // Scoped to whatever list is currently visible (a sheet's lots, or the
-  // current search results) — not the whole project — so "select all"
-  // means "all of what I'm looking at right now".
   function toggleColorSelectAll(visible: LotFeature[]) {
     const visibleIds = visible.map((f) => String(f.id));
     const allSelected = visibleIds.length > 0 && visibleIds.every((id) => colorSelectedIds.has(id));
@@ -959,11 +839,6 @@ export default function AttributeTable({
 
   const expandedSheet = expandedSheetKey ? sheetGroups.find((g) => g.key === expandedSheetKey) ?? null : null;
 
-  // Single source of truth for the top summary bar. Priority: an active
-  // search wins (shows match count/area across all sheets), then a
-  // drilled-into sheet (shows that sheet's own count/area), then the
-  // overall total. There's only ever one number on screen and it always
-  // matches the table currently being shown underneath it.
   const summaryCount = isSearching
     ? searchResults.lots.length
     : expandedSheet
@@ -1042,10 +917,6 @@ export default function AttributeTable({
         }
       />
 
-      {/* Combined breadcrumb + color-toolbar row — see COMPACT HEADER note
-          at the top of the file. Renders whenever a lots table (drilled
-          sheet or search results) is showing; absent on the plain sheets
-          list, which has no checkboxes and nothing to color. */}
       {(isSearching || expandedSheet) && (
         <div
           className="flex flex-shrink-0 items-center gap-3 px-3 py-1"
@@ -1069,42 +940,14 @@ export default function AttributeTable({
                   {expandedSheet.encodedBy && ` · Encoded by ${expandedSheet.encodedBy}`}
                 </span>
 
-                {/* Plan link/control — see BREADCRUMB PLAN LINK note at the
-                    top of the file. Kept as its own flex-shrink-0 segment
-                    (not folded into the truncating span above it) since
-                    AddPlanLinkControl renders interactive input/buttons
-                    that shouldn't get clipped by a truncated ancestor. */}
-                <span className="flex-shrink-0 text-[var(--sb-text-faint)]">·</span>
-                <span className="flex-shrink-0">
-                  {expandedSheet.planUrl ? (
-                    <PlanLink url={expandedSheet.planUrl} label="Plan" />
-                  ) : expandedSheet.sheetId != null && onUpdatePlanUrl ? (
-                    <AddPlanLinkControl sheetId={expandedSheet.sheetId} onSave={onUpdatePlanUrl} />
-                  ) : (
-                    <span className="text-[11.5px] text-[var(--sb-text-faint)]">No plan</span>
-                  )}
-                </span>
-
-                {/* Survey no. — display existing + optional "Add survey no."
-                    for lots still missing one (see SHEET SURVEY NO). */}
-                <span className="flex-shrink-0 text-[var(--sb-text-faint)]">·</span>
-                <span className="flex-shrink-0 flex items-center gap-1.5">
-                  {expandedSheet.surveyNo ? (
-                    <span className="text-[11.5px] text-[var(--sb-text-muted)]">
-                      Survey {expandedSheet.surveyNo}
+                {expandedSheet.planUrl && (
+                  <>
+                    <span className="flex-shrink-0 text-[var(--sb-text-faint)]">·</span>
+                    <span className="flex-shrink-0">
+                      <PlanLink url={expandedSheet.planUrl} label="Plan" />
                     </span>
-                  ) : null}
-                  {expandedSheet.hasMissingSurveyNo &&
-                  expandedSheet.sheetId != null &&
-                  onUpdateSurveyNo ? (
-                    <AddSurveyNoControl
-                      sheetId={expandedSheet.sheetId}
-                      onSave={onUpdateSurveyNo}
-                    />
-                  ) : !expandedSheet.surveyNo ? (
-                    <span className="text-[11.5px] text-[var(--sb-text-faint)]">No survey no.</span>
-                  ) : null}
-                </span>
+                  </>
+                )}
               </>
             ) : (
               <span className="text-[11.5px] font-medium text-[var(--sb-text-faint)]">Search results</span>
@@ -1122,9 +965,6 @@ export default function AttributeTable({
       <div
         className="min-h-0 flex-1 overflow-auto"
         style={{
-          // iOS Safari momentum scrolling + stop the table's own scroll
-          // from bubbling into a page-level scroll once it hits the end —
-          // a common source of "the panel feels stuck" on iPhone.
           WebkitOverflowScrolling: "touch",
           overscrollBehavior: "contain",
         }}
@@ -1161,6 +1001,8 @@ export default function AttributeTable({
             onViewSheet={onViewSheet}
             onUpdatePlanUrl={onUpdatePlanUrl}
             onUpdateSurveyNo={onUpdateSurveyNo}
+            onUpdateDocumentsUrl={onUpdateDocumentsUrl}
+            onUpdateSurveyClass={onUpdateSurveyClass}
           />
         )}
       </div>
@@ -1205,17 +1047,16 @@ function SheetsTable({
   onViewSheet,
   onUpdatePlanUrl,
   onUpdateSurveyNo,
+  onUpdateDocumentsUrl,
+  onUpdateSurveyClass,
 }: {
   groups: SheetGroup[];
   onOpenSheet: (key: string) => void;
-  // See SheetPreviewRequest above — only the fields the parent actually
-  // needs to build a whole-sheet preview, not the internal SheetGroup
-  // bookkeeping fields (key, totalArea).
   onViewSheet?: (sheet: SheetPreviewRequest) => void;
-  // See onUpdatePlanUrl on Props above.
   onUpdatePlanUrl?: (sheetId: number, planUrl: string) => Promise<void>;
-  // See onUpdateSurveyNo on Props above.
   onUpdateSurveyNo?: (sheetId: number, surveyNo: string) => Promise<void>;
+  onUpdateDocumentsUrl?: (sheetId: number, documentsUrl: string) => Promise<void>;
+  onUpdateSurveyClass?: (sheetId: number, surveyClass: "admin" | "private") => Promise<void>;
 }) {
   return (
     <table className="w-full border-collapse text-[11.5px]">
@@ -1225,7 +1066,9 @@ function SheetsTable({
           <Th>Municipality</Th>
           <Th>Province</Th>
           <Th>Plan</Th>
+          <Th>Documents</Th>
           <Th>Survey No.</Th>
+          <Th>Class</Th>
           <Th numeric>Lots</Th>
           <Th numeric>Total Area (sq.m.)</Th>
           <Th>Encoded By</Th>
@@ -1234,14 +1077,6 @@ function SheetsTable({
       </thead>
       <tbody>
         {groups.map((g, i) => (
-          // No more chevron/action column for the "drill in" affordance —
-          // the whole row is still that click target (onClick below) and
-          // a native title gives a plain "click to view lots" tooltip on
-          // hover. The Preview column (below, when onViewSheet is
-          // provided) and the Plan cell's inline edit control are both
-          // deliberately separate, explicit actions with their own
-          // stopPropagation so neither also triggers the row's drill-in
-          // click.
           <tr
             key={g.key}
             onClick={() => onOpenSheet(g.key)}
@@ -1270,16 +1105,32 @@ function SheetsTable({
               )}
             </td>
             <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]" onClick={(e) => e.stopPropagation()}>
+              {g.documentsUrl ? (
+                <PlanLink url={g.documentsUrl} label="View" />
+              ) : g.sheetId != null && onUpdateDocumentsUrl ? (
+                <AddDocumentsLinkControl sheetId={g.sheetId} onSave={onUpdateDocumentsUrl} />
+              ) : (
+                "—"
+              )}
+            </td>
+            <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]" onClick={(e) => e.stopPropagation()}>
               <span className="inline-flex flex-wrap items-center gap-1.5">
-                {g.surveyNo ? (
-                  <span className="text-[var(--sb-text)]">{g.surveyNo}</span>
-                ) : null}
-                {g.hasMissingSurveyNo && g.sheetId != null && onUpdateSurveyNo ? (
+                {g.surveyNo ? <span className="text-[var(--sb-text)]">{g.surveyNo}</span> : null}
+                {!g.surveyNo && g.sheetId != null && onUpdateSurveyNo ? (
                   <AddSurveyNoControl sheetId={g.sheetId} onSave={onUpdateSurveyNo} />
                 ) : !g.surveyNo ? (
                   "—"
                 ) : null}
               </span>
+            </td>
+            <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]" onClick={(e) => e.stopPropagation()}>
+              {g.surveyClass ? (
+                <span className="capitalize text-[var(--sb-text)]">{g.surveyClass}</span>
+              ) : g.sheetId != null && onUpdateSurveyClass ? (
+                <AddSurveyClassControl sheetId={g.sheetId} onSave={onUpdateSurveyClass} />
+              ) : (
+                "—"
+              )}
             </td>
             <td className="px-2.5 py-[6px] text-right tabular-nums text-[var(--sb-text-muted)]">{g.lots.length}</td>
             <td className="px-2.5 py-[6px] text-right tabular-nums text-[var(--sb-text-muted)]">
@@ -1326,10 +1177,6 @@ function LotsTable({
   features: LotFeature[];
   onRowClick?: (feature: LotFeature) => void;
   selectedId?: number | string | null;
-  // True for cross-sheet search results, where rows can come from several
-  // sheets at once and the sheet needs to be visible again — false for the
-  // normal drill-into-one-sheet view, where it'd just repeat what the
-  // breadcrumb above already says.
   showSheetNo?: boolean;
   lotColors?: Record<string, string>;
   colorSelectedIds: Set<string>;
@@ -1340,10 +1187,6 @@ function LotsTable({
   const visibleIds = features.map((f) => String(f.id));
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => colorSelectedIds.has(id));
 
-  // Row DOM nodes keyed by (stringified) lot id, so the effect below can
-  // scroll the currently-selected one into view — this is what brings a
-  // lot clicked directly on the map into visible/scrolled focus here,
-  // once AttributeTable has (if needed) auto-drilled into its sheet.
   const rowRefs = useRef<Record<string, HTMLTableRowElement | null>>({});
 
   useEffect(() => {
@@ -1352,9 +1195,6 @@ function LotsTable({
     if (el) {
       el.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }
-    // Re-run whenever the selection changes OR the visible feature set
-    // changes (e.g. right after AttributeTable auto-drills into a sheet
-    // and this row first mounts).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId, features]);
 
@@ -1387,10 +1227,6 @@ function LotsTable({
           const isColorChecked = colorSelectedIds.has(id);
           const rowColor = lotColors?.[id];
 
-          // Row background: a colored lot always gets a translucent tint
-          // of its own color (stronger when also selected), so the table
-          // mirrors the polygon fill on the map. Only rows with NO color
-          // fall back to the theme's zebra/selected/checked styling.
           const baseBg = rowColor
             ? hexToRgba(rowColor, isSelected ? 0.28 : 0.16)
             : isSelected
@@ -1465,7 +1301,6 @@ function LotsTable({
               <td className="max-w-[140px] truncate px-2.5 py-[6px] text-[var(--sb-text-muted)]">{f.properties.owner}</td>
               <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{f.properties.barangay}</td>
               <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{f.properties.municipality}</td>
-              <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{f.properties.surveyNo}</td>
               <td className="whitespace-nowrap px-2.5 py-[6px] text-[var(--sb-text-muted)]">
                 {formatDate(f.properties.dateSurveyed)}
               </td>

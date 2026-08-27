@@ -2,7 +2,21 @@
 
 // Target path: src/components/ExportFooter.tsx
 //
-// GOOGLE DRIVE VALIDATION (this pass): the optional "Plan link" field in
+// DOCUMENTS LINK + SURVEY CLASS (this pass): the Save-to-Database modal
+// gains two new fields alongside the existing "Plan link":
+//   - "Documents link" — optional, same shape/validation as Plan link
+//     (must be a traceable Google Drive/Docs URL when non-empty, checked
+//     in handleSave right next to the existing planUrl check). Can be
+//     left blank, same as planUrl.
+//   - "Survey class" — a required <select> (Admin / Private), unlike the
+//     two link fields. There's no "leave it blank" option: the select
+//     always has a value (defaults to "private"), so there's nothing to
+//     validate beyond "did the POST include it" — the dropdown itself
+//     guarantees the value is one of the two allowed strings.
+// Both are sent in the POST /api/lot-sheets body as documentsUrl /
+// surveyClass, alongside the existing planUrl.
+//
+// GOOGLE DRIVE VALIDATION (earlier pass): the optional "Plan link" field in
 // the Save-to-Database modal is now validated the same way as
 // AttributeTable's "Add link" control — it must be a traceable Google
 // Drive/Docs URL (see isTraceableGoogleDriveLink in src/lib/planLink.ts)
@@ -27,6 +41,7 @@ interface Props {
 }
 
 type SaveState = "idle" | "saving" | "saved" | "duplicate" | "error";
+type SurveyClass = "admin" | "private";
 
 function computedLotToFeature(computed: ComputedLot, lot: Lot | undefined) {
   return {
@@ -58,7 +73,6 @@ function getMissingFields(lot: Lot): string[] {
   if (!lot.municipalityId) missing.push("Municipality");
   if (!lot.barangayId) missing.push("Barangay");
   if (!lot.surveyorId) missing.push("Surveyor");
-  if (!lot.surveyNo.trim()) missing.push("Survey No.");
   if (!lot.dateSurveyed.trim()) missing.push("Date surveyed");
   return missing;
 }
@@ -103,6 +117,11 @@ export default function ExportFooter({ lots, computedLots, controlPoint }: Props
   const [modalOpen, setModalOpen] = useState(false);
   const [sheetNo, setSheetNo] = useState("");
   const [planUrl, setPlanUrl] = useState("");
+  const [documentsUrl, setDocumentsUrl] = useState("");
+  // Always has a value — the dropdown has no blank option, so
+  // surveyClass is guaranteed to be "admin" or "private" by the time
+  // handleSave reads it. Defaults to "private" (the more common case).
+  const [surveyClass, setSurveyClass] = useState<SurveyClass>("private");
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [duplicates, setDuplicates] = useState<{ lotNo: string; surveyNo: string }[]>([]);
@@ -111,6 +130,8 @@ export default function ExportFooter({ lots, computedLots, controlPoint }: Props
   function openModal() {
     setSheetNo("");
     setPlanUrl("");
+    setDocumentsUrl("");
+    setSurveyClass("private");
     setSaveState("idle");
     setSaveMessage(null);
     setDuplicates([]);
@@ -180,6 +201,19 @@ export default function ExportFooter({ lots, computedLots, controlPoint }: Props
       return;
     }
 
+    // Documents link — same deal as planUrl: optional, but must be a
+    // traceable Google Drive/Docs link if the user typed one in.
+    const trimmedDocumentsUrl = documentsUrl.trim();
+    if (trimmedDocumentsUrl && !isTraceableGoogleDriveLink(trimmedDocumentsUrl)) {
+      setSaveState("error");
+      setSaveMessage(PLAN_LINK_HELP_MESSAGE);
+      return;
+    }
+
+    // surveyClass has no blank state to check for — the <select> always
+    // holds "admin" or "private" — so there's nothing to validate here
+    // beyond what TypeScript already guarantees at compile time.
+
     setSaveState("saving");
     setSaveMessage(null);
     setDuplicates([]);
@@ -214,6 +248,8 @@ export default function ExportFooter({ lots, computedLots, controlPoint }: Props
           ppcsEasting: controlPoint.ppcsEasting,
           zone: controlPoint.zone,
           planUrl: trimmedPlanUrl || null,
+          documentsUrl: trimmedDocumentsUrl || null,
+          surveyClass,
           lots: payloadLots,
         }),
       });
@@ -311,6 +347,31 @@ export default function ExportFooter({ lots, computedLots, controlPoint }: Props
                     onChange={(e) => setPlanUrl(e.target.value)}
                     placeholder="https://drive.google.com/file/d/…"
                   />
+                </label>
+
+                <label className={labelCls}>
+                  Documents link (optional — must be Google Drive)
+                  <input
+                    className={inputCls}
+                    type="url"
+                    value={documentsUrl}
+                    disabled={saveState === "saving"}
+                    onChange={(e) => setDocumentsUrl(e.target.value)}
+                    placeholder="https://drive.google.com/file/d/…"
+                  />
+                </label>
+
+                <label className={labelCls}>
+                  Survey class
+                  <select
+                    className={inputCls}
+                    value={surveyClass}
+                    disabled={saveState === "saving"}
+                    onChange={(e) => setSurveyClass(e.target.value as SurveyClass)}
+                  >
+                    <option value="admin">Admin</option>
+                    <option value="private">Private</option>
+                  </select>
                 </label>
 
                 {saveState === "duplicate" && (

@@ -1,5 +1,21 @@
 // Target path in your project: src/app/api/map/lots/route.ts
 //
+// DOCUMENTS URL + SURVEY CLASS FIX (this pass): the SELECT below was
+// missing ls.documents_url and ls.survey_class entirely, so every feature
+// returned by this endpoint always had properties.documentsUrl and
+// properties.surveyClass as undefined — regardless of what was actually
+// saved in lot_sheets. AttributeTable's inline "Add link" (Documents) and
+// "Set class" controls call the PATCH route in
+// src/app/api/lot-sheets/[id]/route.ts, which DOES write documents_url /
+// survey_class correctly, and page.tsx's handlers optimistically patch
+// those fields onto in-memory features on success — so it looked like it
+// was working right up until a refresh (or re-toggling the layer) forced
+// a refetch through THIS route, at which point the freshly-saved values
+// vanished because they were never being selected in the first place.
+// Fixed by adding ls.documents_url and ls.survey_class to the SELECT and
+// mapping them to properties.documentsUrl / properties.surveyClass below,
+// same pattern as the existing ls.plan_url -> properties.planUrl.
+//
 // Feeds the map: returns a GeoJSON FeatureCollection for whichever selection
 // the sidebar (or search) has picked. Queries against the PostGIS `geom`
 // column (GIST indexed), not the raw `geojson` JSONB, so this stays fast as
@@ -23,8 +39,9 @@
 // silently dumping a partial (and confusingly incomplete-looking) map.
 //
 // NOTE: each returned feature carries properties.sheetId (lot_sheets.id)
-// alongside sheetNo/planUrl. This lets the attribute table group lots by
-// sheet client-side without a separate request — see AttributeTable.tsx.
+// alongside sheetNo/planUrl/documentsUrl/surveyClass. This lets the
+// attribute table group lots by sheet client-side without a separate
+// request — see AttributeTable.tsx.
 //
 // Province/municipality now come from the lot's sheet's control point
 // (lot_sheets.control_point_id -> control_points) rather than the lot's own
@@ -148,7 +165,7 @@ export async function GET(request: Request) {
     SELECT
       l.id, l.lot_no, l.owner_given_name, l.owner_surname,
       l.survey_no, l.date_surveyed, l.area_sqm, l.patent_no, l.remarks,
-      ls.id AS sheet_id, ls.plan_url, ls.sheet_no,
+      ls.id AS sheet_id, ls.plan_url, ls.documents_url, ls.survey_class, ls.sheet_no,
       ST_AsGeoJSON(l.geom) AS geometry_json,
       COALESCE(cp.province_name, p.name) AS province_name,
       COALESCE(cp.municipality_name, m.name) AS municipality_name,
@@ -195,6 +212,8 @@ export async function GET(request: Request) {
       patentNo: row.patent_no,
       remarks: row.remarks,
       planUrl: row.plan_url,
+      documentsUrl: row.documents_url,
+      surveyClass: row.survey_class,
       encodedBy: row.encoded_by_username,
     },
   }));
