@@ -477,7 +477,7 @@ function SheetLotsList({ lots, onSelectLot }: { lots: LotFeature[]; onSelectLot?
               <button
                 type="button"
                 onClick={() => onSelectLot?.(f)}
-                className="flex min-w-0 flex-1 items-center gap-2 text-left transition-opacity duration-100 hover:opacity-75"
+                className="flex min-w-0 flex-1 items-center gap-2 border-0 bg-transparent p-0 text-left transition-opacity duration-100 hover:opacity-75"
               >
                 <MapPin size={12} className="flex-shrink-0 text-[var(--sb-text-faint)]" />
                 <span className="min-w-0 flex-1">

@@ -7,7 +7,19 @@ import { isTraceableGoogleDriveLink, PLAN_LINK_HELP_MESSAGE } from "@/lib/planLi
 import SummaryBar from "@/components/map/SummaryBar";
 import { useSidebarTheme } from "@/components/map/SidebarThemeContext";
 import { uiFont } from "@/components/map/sidebarTheme";
-import { Table2, X, ChevronLeft, ExternalLink, Search, Palette, Check, Eye, Link2 } from "lucide-react";
+import {
+  Table2,
+  X,
+  ChevronLeft,
+  ExternalLink,
+  Search,
+  Palette,
+  Check,
+  Eye,
+  Link2,
+  Loader2,
+  Plus,
+} from "lucide-react";
 
 const COLOR_PRESETS: { label: string; value: string }[] = [
   { label: "Titled", value: "#22c55e" },
@@ -183,6 +195,10 @@ function matchesLotQuery(f: LotFeature, query: string): boolean {
   return haystack.some((v) => v != null && String(v).toLowerCase().includes(query));
 }
 
+// Filled-state chip for a saved external link (Plan / Documents). Same
+// pill shape/size as the empty-state "Add link" trigger below it renders
+// in place of, so a column reads as one consistent chip regardless of
+// whether the sheet has a value yet.
 function PlanLink({ url, stopPropagation, label }: { url: string; stopPropagation?: boolean; label: string }) {
   return React.createElement(
     "a",
@@ -192,43 +208,108 @@ function PlanLink({ url, stopPropagation, label }: { url: string; stopPropagatio
       rel: "noopener noreferrer",
       onClick: stopPropagation ? (e: React.MouseEvent) => e.stopPropagation() : undefined,
       className:
-        "inline-flex items-center gap-1 text-[11.5px] font-medium text-[var(--sb-accent)] transition-opacity hover:opacity-70",
+        "inline-flex items-center gap-1 rounded-full border-0 bg-[var(--sb-hover)] px-2 py-[3px] text-[10.5px] font-semibold text-[var(--sb-accent)] transition-colors duration-100 hover:bg-[var(--sb-accent-bg)]",
     },
-    React.createElement(ExternalLink, { size: 11 }),
+    React.createElement(ExternalLink, { size: 10 }),
     label
   );
 }
 
-function AddSurveyNoControl({
+// Small colored badge for survey class, so "Admin" vs "Private" is
+// scannable down the column at a glance instead of reading as plain body
+// text indistinguishable from any other cell.
+function SurveyClassBadge({ value }: { value: "admin" | "private" }) {
+  const isAdmin = value === "admin";
+  return (
+    <span
+      className="inline-flex items-center rounded-full px-2 py-[2px] text-[10px] font-bold uppercase tracking-wide"
+      style={{
+        background: isAdmin ? "rgba(59, 130, 246, 0.14)" : "rgba(168, 85, 247, 0.14)",
+        color: isAdmin ? "#3b82f6" : "#a855f7",
+      }}
+    >
+      {value}
+    </span>
+  );
+}
+
+type FieldKind = "text" | "url" | "select";
+
+interface SelectOption {
+  value: string;
+  label: string;
+}
+
+// One reusable inline "click to add a value" control, replacing what used
+// to be four nearly-identical components (AddSurveyNoControl,
+// AddPlanLinkControl, AddDocumentsLinkControl, AddSurveyClassControl).
+// Handles text input, URL input (with a `validate` hook for the Google
+// Drive link check), and a select — same trigger/edit/save/cancel/error
+// shape for all three, so a fix or style tweak only has to happen once.
+//
+// Trigger renders as a small accent-tinted pill with a "+" icon (instead
+// of the old plain underline-less text link) so it's unambiguous that
+// it's a button, and visually matches PlanLink's filled-state pill and
+// the sheet row's Preview icon button — one consistent chip language
+// across the whole table.
+function InlineFieldControl({
   sheetId,
+  kind,
+  triggerLabel,
+  tooltip,
+  placeholder,
+  selectOptions,
+  inputWidth = 140,
+  validate,
   onSave,
 }: {
   sheetId: number;
-  onSave: (sheetId: number, surveyNo: string) => Promise<void>;
+  kind: FieldKind;
+  triggerLabel: string;
+  tooltip: string;
+  placeholder?: string;
+  selectOptions?: SelectOption[];
+  inputWidth?: number;
+  validate?: (value: string) => string | null;
+  onSave: (sheetId: number, value: string) => Promise<void>;
 }) {
+  const defaultValue = kind === "select" ? selectOptions?.[0]?.value ?? "" : "";
   const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState("");
+  const [value, setValue] = useState(defaultValue);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  function open(e: React.MouseEvent) {
+    e.stopPropagation();
+    setEditing(true);
+  }
+
   function cancel() {
     setEditing(false);
-    setValue("");
+    setValue(defaultValue);
     setError(null);
   }
 
   async function handleSave() {
     const trimmed = value.trim();
-    if (!trimmed) return;
+    if (kind !== "select" && !trimmed) return;
+
+    if (validate) {
+      const validationError = validate(trimmed);
+      if (validationError) {
+        setError(validationError);
+        return;
+      }
+    }
 
     setSaving(true);
     setError(null);
     try {
       await onSave(sheetId, trimmed);
       setEditing(false);
-      setValue("");
+      setValue(defaultValue);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't save survey no.");
+      setError(err instanceof Error ? err.message : "Couldn't save.");
     } finally {
       setSaving(false);
     }
@@ -236,13 +317,15 @@ function AddSurveyNoControl({
 
   if (!editing) {
     return (
-      <Tooltip label="Set survey number">
+      <Tooltip label={tooltip}>
         <button
           type="button"
-          onClick={() => setEditing(true)}
-          className="inline-flex items-center gap-1 text-[11.5px] font-medium text-[var(--sb-text-faint)] transition-colors hover:text-[var(--sb-accent)]"
+          onClick={open}
+          className="inline-flex items-center gap-1 rounded-full border border-dashed px-2 py-[3px] text-[10.5px] font-semibold text-[var(--sb-accent)] transition-colors duration-100 hover:border-solid hover:bg-[var(--sb-accent-bg)]"
+          style={{ borderColor: "color-mix(in srgb, var(--sb-accent) 45%, transparent)" }}
         >
-          Add survey no.
+          <Plus size={10} strokeWidth={2.5} />
+          {triggerLabel}
         </button>
       </Tooltip>
     );
@@ -250,347 +333,77 @@ function AddSurveyNoControl({
 
   return (
     <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-      <input
-        autoFocus
-        type="text"
-        value={value}
-        disabled={saving}
-        onChange={(e) => {
-          setValue(e.target.value);
-          if (error) setError(null);
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") handleSave();
-          if (e.key === "Escape") cancel();
-        }}
-        placeholder="Survey number…"
-        className="w-[120px] rounded-md px-1.5 py-[3px] text-[11px] outline-none"
-        style={{
-          background: "var(--sb-bg)",
-          boxShadow: `inset 0 0 0 1px ${error ? "#ef4444" : HAIRLINE}`,
-          color: "var(--sb-text)",
-        }}
-      />
-      <button
-        type="button"
-        onClick={handleSave}
-        disabled={saving || !value.trim()}
-        className="text-[10.5px] font-semibold text-[var(--sb-accent)] disabled:opacity-40"
-      >
-        {saving ? "…" : "Save"}
-      </button>
-      <button
-        type="button"
-        onClick={cancel}
-        disabled={saving}
-        className="text-[10.5px] text-[var(--sb-text-faint)]"
-      >
-        Cancel
-      </button>
-      {error && (
-        <Tooltip label={error}>
-          <span className="flex h-[14px] w-[14px] flex-shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-red-500">
-            !
-          </span>
-        </Tooltip>
+      {kind === "select" ? (
+        <select
+          autoFocus
+          value={value}
+          disabled={saving}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") cancel();
+          }}
+          className="rounded-md px-1.5 py-[3px] text-[11px] outline-none"
+          style={{
+            background: "var(--sb-bg)",
+            boxShadow: `inset 0 0 0 1px ${error ? "#ef4444" : HAIRLINE}`,
+            color: "var(--sb-text)",
+          }}
+        >
+          {selectOptions?.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <input
+          autoFocus
+          type={kind === "url" ? "url" : "text"}
+          value={value}
+          disabled={saving}
+          onChange={(e) => {
+            setValue(e.target.value);
+            if (error) setError(null);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") handleSave();
+            if (e.key === "Escape") cancel();
+          }}
+          placeholder={placeholder}
+          style={{
+            width: inputWidth,
+            background: "var(--sb-bg)",
+            boxShadow: `inset 0 0 0 1px ${error ? "#ef4444" : HAIRLINE}`,
+            color: "var(--sb-text)",
+          }}
+          className="rounded-md px-1.5 py-[3px] text-[11px] outline-none"
+        />
       )}
-    </div>
-  );
-}
 
-function AddPlanLinkControl({
-  sheetId,
-  onSave,
-}: {
-  sheetId: number;
-  onSave: (sheetId: number, planUrl: string) => Promise<void>;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  function cancel() {
-    setEditing(false);
-    setValue("");
-    setError(null);
-  }
-
-  async function handleSave() {
-    const trimmed = value.trim();
-    if (!trimmed) return;
-
-    if (!isTraceableGoogleDriveLink(trimmed)) {
-      setError(PLAN_LINK_HELP_MESSAGE);
-      return;
-    }
-
-    setSaving(true);
-    setError(null);
-    try {
-      await onSave(sheetId, trimmed);
-      setEditing(false);
-      setValue("");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't save link.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  if (!editing) {
-    return (
-      <Tooltip label="Add a Google Drive link to this sheet's plan">
+      <Tooltip label="Save">
         <button
           type="button"
-          onClick={() => setEditing(true)}
-          className="inline-flex items-center gap-1 text-[11.5px] font-medium text-[var(--sb-text-faint)] transition-colors hover:text-[var(--sb-accent)]"
+          onClick={handleSave}
+          disabled={saving || (kind !== "select" && !value.trim())}
+          className="flex h-[21px] w-[21px] flex-shrink-0 items-center justify-center rounded-full border-0 p-0 text-white transition-opacity duration-100 disabled:opacity-40"
+          style={{ background: "var(--sb-accent)" }}
         >
-          <Link2 size={11} />
-          Add link
+          {saving ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} strokeWidth={2.5} />}
         </button>
       </Tooltip>
-    );
-  }
-
-  return (
-    <div className="flex items-center gap-1">
-      <input
-        autoFocus
-        type="url"
-        value={value}
-        disabled={saving}
-        onChange={(e) => {
-          setValue(e.target.value);
-          if (error) setError(null);
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") handleSave();
-          if (e.key === "Escape") cancel();
-        }}
-        placeholder="Paste Google Drive link…"
-        className="w-[168px] rounded-md px-1.5 py-[3px] text-[11px] outline-none"
-        style={{
-          background: "var(--sb-bg)",
-          boxShadow: `inset 0 0 0 1px ${error ? "#ef4444" : HAIRLINE}`,
-          color: "var(--sb-text)",
-        }}
-      />
-      <button
-        type="button"
-        onClick={handleSave}
-        disabled={saving || !value.trim()}
-        className="text-[10.5px] font-semibold text-[var(--sb-accent)] disabled:opacity-40"
-      >
-        {saving ? "…" : "Save"}
-      </button>
-      <button
-        type="button"
-        onClick={cancel}
-        disabled={saving}
-        className="text-[10.5px] text-[var(--sb-text-faint)]"
-      >
-        Cancel
-      </button>
-      {error && (
-        <Tooltip label={error}>
-          <span className="flex h-[14px] w-[14px] flex-shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-red-500">
-            !
-          </span>
-        </Tooltip>
-      )}
-    </div>
-  );
-}
-
-function AddDocumentsLinkControl({
-  sheetId,
-  onSave,
-}: {
-  sheetId: number;
-  onSave: (sheetId: number, documentsUrl: string) => Promise<void>;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  function cancel() {
-    setEditing(false);
-    setValue("");
-    setError(null);
-  }
-
-  async function handleSave() {
-    const trimmed = value.trim();
-    if (!trimmed) return;
-
-    if (!isTraceableGoogleDriveLink(trimmed)) {
-      setError(PLAN_LINK_HELP_MESSAGE);
-      return;
-    }
-
-    setSaving(true);
-    setError(null);
-    try {
-      await onSave(sheetId, trimmed);
-      setEditing(false);
-      setValue("");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't save link.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  if (!editing) {
-    return (
-      <Tooltip label="Add a Google Drive link to this sheet's documents">
+      <Tooltip label="Cancel">
         <button
           type="button"
-          onClick={() => setEditing(true)}
-          className="inline-flex items-center gap-1 text-[11.5px] font-medium text-[var(--sb-text-faint)] transition-colors hover:text-[var(--sb-accent)]"
+          onClick={cancel}
+          disabled={saving}
+          className="flex h-[21px] w-[21px] flex-shrink-0 items-center justify-center rounded-full border-0 bg-transparent p-0 text-[var(--sb-text-faint)] transition-colors duration-100 hover:bg-[var(--sb-hover)] hover:text-[var(--sb-text)]"
         >
-          <Link2 size={11} />
-          Add link
+          <X size={12} />
         </button>
       </Tooltip>
-    );
-  }
-
-  return (
-    <div className="flex items-center gap-1">
-      <input
-        autoFocus
-        type="url"
-        value={value}
-        disabled={saving}
-        onChange={(e) => {
-          setValue(e.target.value);
-          if (error) setError(null);
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") handleSave();
-          if (e.key === "Escape") cancel();
-        }}
-        placeholder="Paste Google Drive link…"
-        className="w-[168px] rounded-md px-1.5 py-[3px] text-[11px] outline-none"
-        style={{
-          background: "var(--sb-bg)",
-          boxShadow: `inset 0 0 0 1px ${error ? "#ef4444" : HAIRLINE}`,
-          color: "var(--sb-text)",
-        }}
-      />
-      <button
-        type="button"
-        onClick={handleSave}
-        disabled={saving || !value.trim()}
-        className="text-[10.5px] font-semibold text-[var(--sb-accent)] disabled:opacity-40"
-      >
-        {saving ? "…" : "Save"}
-      </button>
-      <button
-        type="button"
-        onClick={cancel}
-        disabled={saving}
-        className="text-[10.5px] text-[var(--sb-text-faint)]"
-      >
-        Cancel
-      </button>
       {error && (
         <Tooltip label={error}>
-          <span className="flex h-[14px] w-[14px] flex-shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-red-500">
-            !
-          </span>
-        </Tooltip>
-      )}
-    </div>
-  );
-}
-
-function AddSurveyClassControl({
-  sheetId,
-  onSave,
-}: {
-  sheetId: number;
-  onSave: (sheetId: number, surveyClass: "admin" | "private") => Promise<void>;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState<"admin" | "private">("private");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  function cancel() {
-    setEditing(false);
-    setError(null);
-  }
-
-  async function handleSave() {
-    setSaving(true);
-    setError(null);
-    try {
-      await onSave(sheetId, value);
-      setEditing(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't save survey class.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  if (!editing) {
-    return (
-      <Tooltip label="Set this sheet's survey class (admin or private)">
-        <button
-          type="button"
-          onClick={() => setEditing(true)}
-          className="inline-flex items-center gap-1 text-[11.5px] font-medium text-[var(--sb-text-faint)] transition-colors hover:text-[var(--sb-accent)]"
-        >
-          Set class
-        </button>
-      </Tooltip>
-    );
-  }
-
-  return (
-    <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-      <select
-        autoFocus
-        value={value}
-        disabled={saving}
-        onChange={(e) => setValue(e.target.value as "admin" | "private")}
-        onKeyDown={(e) => {
-          if (e.key === "Escape") cancel();
-        }}
-        className="rounded-md px-1.5 py-[3px] text-[11px] outline-none"
-        style={{
-          background: "var(--sb-bg)",
-          boxShadow: `inset 0 0 0 1px ${error ? "#ef4444" : HAIRLINE}`,
-          color: "var(--sb-text)",
-        }}
-      >
-        <option value="admin">Admin</option>
-        <option value="private">Private</option>
-      </select>
-      <button
-        type="button"
-        onClick={handleSave}
-        disabled={saving}
-        className="text-[10.5px] font-semibold text-[var(--sb-accent)] disabled:opacity-40"
-      >
-        {saving ? "…" : "Save"}
-      </button>
-      <button
-        type="button"
-        onClick={cancel}
-        disabled={saving}
-        className="text-[10.5px] text-[var(--sb-text-faint)]"
-      >
-        Cancel
-      </button>
-      {error && (
-        <Tooltip label={error}>
-          <span className="flex h-[14px] w-[14px] flex-shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-red-500">
+          <span className="flex h-[15px] w-[15px] flex-shrink-0 items-center justify-center rounded-full bg-red-500/15 text-[10px] font-bold text-red-500">
             !
           </span>
         </Tooltip>
@@ -1054,6 +867,11 @@ function Th({ children, numeric }: { children: React.ReactNode; numeric?: boolea
   );
 }
 
+const SURVEY_CLASS_OPTIONS: SelectOption[] = [
+  { value: "admin", label: "Admin" },
+  { value: "private", label: "Private" },
+];
+
 function SheetsTable({
   groups,
   onOpenSheet,
@@ -1121,7 +939,16 @@ function SheetsTable({
                 {g.planUrl ? (
                   <PlanLink url={g.planUrl} label="View" />
                 ) : g.sheetId != null && onUpdatePlanUrl ? (
-                  <AddPlanLinkControl sheetId={g.sheetId} onSave={onUpdatePlanUrl} />
+                  <InlineFieldControl
+                    sheetId={g.sheetId}
+                    kind="url"
+                    triggerLabel="Add link"
+                    tooltip="Add a Google Drive link to this sheet's plan"
+                    placeholder="Paste Google Drive link…"
+                    inputWidth={168}
+                    validate={(v) => (isTraceableGoogleDriveLink(v) ? null : PLAN_LINK_HELP_MESSAGE)}
+                    onSave={onUpdatePlanUrl}
+                  />
                 ) : (
                   "—"
                 )}
@@ -1130,7 +957,16 @@ function SheetsTable({
                 {g.documentsUrl ? (
                   <PlanLink url={g.documentsUrl} label="View" />
                 ) : g.sheetId != null && onUpdateDocumentsUrl ? (
-                  <AddDocumentsLinkControl sheetId={g.sheetId} onSave={onUpdateDocumentsUrl} />
+                  <InlineFieldControl
+                    sheetId={g.sheetId}
+                    kind="url"
+                    triggerLabel="Add link"
+                    tooltip="Add a Google Drive link to this sheet's documents"
+                    placeholder="Paste Google Drive link…"
+                    inputWidth={168}
+                    validate={(v) => (isTraceableGoogleDriveLink(v) ? null : PLAN_LINK_HELP_MESSAGE)}
+                    onSave={onUpdateDocumentsUrl}
+                  />
                 ) : (
                   "—"
                 )}
@@ -1139,7 +975,15 @@ function SheetsTable({
                 <span className="inline-flex flex-wrap items-center gap-1.5">
                   {g.surveyNo ? <span className="text-[var(--sb-text)]">{g.surveyNo}</span> : null}
                   {!g.surveyNo && g.sheetId != null && onUpdateSurveyNo ? (
-                    <AddSurveyNoControl sheetId={g.sheetId} onSave={onUpdateSurveyNo} />
+                    <InlineFieldControl
+                      sheetId={g.sheetId}
+                      kind="text"
+                      triggerLabel="Add survey no."
+                      tooltip="Set survey number"
+                      placeholder="Survey number…"
+                      inputWidth={120}
+                      onSave={onUpdateSurveyNo}
+                    />
                   ) : !g.surveyNo ? (
                     "—"
                   ) : null}
@@ -1147,9 +991,16 @@ function SheetsTable({
               </td>
               <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]" onClick={(e) => e.stopPropagation()}>
                 {g.surveyClass ? (
-                  <span className="capitalize text-[var(--sb-text)]">{g.surveyClass}</span>
+                  <SurveyClassBadge value={g.surveyClass} />
                 ) : g.sheetId != null && onUpdateSurveyClass ? (
-                  <AddSurveyClassControl sheetId={g.sheetId} onSave={onUpdateSurveyClass} />
+                  <InlineFieldControl
+                    sheetId={g.sheetId}
+                    kind="select"
+                    triggerLabel="Set class"
+                    tooltip="Set this sheet's survey class (admin or private)"
+                    selectOptions={SURVEY_CLASS_OPTIONS}
+                    onSave={(sheetId, value) => onUpdateSurveyClass(sheetId, value as "admin" | "private")}
+                  />
                 ) : (
                   "—"
                 )}
