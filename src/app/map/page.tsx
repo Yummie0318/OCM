@@ -2,7 +2,37 @@
 
 // Target path: src/app/map/page.tsx
 //
-// DOCUMENTS LINK + SURVEY CLASS WIRING (this pass): AttributeTable's two
+// SEARCH RESULT AS A REAL SELECTION (this pass): handleSearchSelect used
+// to shove the picked lot straight into `layerData.search` without ever
+// touching `activeSelections`. That meant a searched lot showed on the
+// map and opened the detail panel, but had no presence in Sidebar's
+// "Selected" tab and no way to be cleared via its X button — the only way
+// to get rid of it was to search something else (which just overwrote the
+// same "search" key) or reload the page. It also meant the general
+// `layerData` cleanup effect below needed a special-cased `k === "search"`
+// branch to keep it from being deleted on every activeSelections change.
+//
+// Now a search pick is keyed `search:<id>` and written into
+// `activeSelections` (with `query: { id }` and a label built from the
+// result's owner/lot no.) at the same time it's written into `layerData`.
+// That's the exact same key shape everything else in this file already
+// understands: SelectedPanel lists it, its X calls onToggle(key, null)
+// which runs through handleToggle exactly like removing a year layer
+// (clears activeSelections, closes the detail panel), the "view in table"
+// icon works on it via tableFilterKey, and "Clear all" sweeps it up too.
+// The special-cased "search" branch in the layerData cleanup effect is
+// gone — a search entry is cleaned up the same way any other selection is,
+// via its presence/absence in activeSelections.
+//
+// Because the key is content-addressed (`search:<result.id>`), searching
+// the same lot again is a no-op re-add rather than a duplicate; searching
+// a different lot adds an additional Selected entry alongside it (same
+// multi-select behavior as picking several years) rather than replacing
+// it. If you'd rather a new search replace any previous search result,
+// strip existing `search:*` keys out of activeSelections before adding
+// the new one in handleSearchSelect.
+//
+// DOCUMENTS LINK + SURVEY CLASS WIRING (earlier pass): AttributeTable's two
 // newer inline controls — "Add link" in the Documents column
 // (AddDocumentsLinkControl) and "Set class" in the Class column
 // (AddSurveyClassControl) — are now wired up here via
@@ -35,7 +65,9 @@
 // no longer even be part of the new selection, so it's closed rather than
 // left open showing stale/orphaned content while the map's contents shift
 // underneath it. This fires on BOTH checking a year on and unchecking one
-// off (handleToggle handles both via the `meta === null` branch).
+// off (handleToggle handles both via the `meta === null` branch), and now
+// also on adding/removing a search result (since search results flow
+// through the same onToggle/handleToggle path — see above).
 //
 // SHEET PREVIEW WIRING (earlier pass): AttributeTable's per-sheet "Preview"
 // button (see its SheetsTable / onViewSheet prop) is now wired up here.
@@ -566,15 +598,16 @@ function MapViewerPageInner() {
   const isPeeking = !isMobile && sidebarCollapsed && peeking;
 
   // Called by Sidebar whenever a year checkbox is checked/unchecked (see
-  // YearRow's onCheck in Sidebar.tsx) — this is what actually adds/removes
-  // a layer of polygons on the map. Whenever that happens, close the lot
-  // detail panel: the layer just changed under it, so whatever lot/sheet
-  // it was showing may no longer even be part of the current selection,
-  // and leaving it open while the map's contents shift is confusing.
-  // Sidebar itself has no knowledge of LotDetailPanel — it only ever
-  // calls this onToggle prop — so this has to live here, not in
-  // Sidebar.tsx. Fires on both adding a layer (meta non-null) and
-  // removing one (meta === null).
+  // YearRow's onCheck in Sidebar.tsx) or a search result is removed from
+  // the Selected tab (see SelectedPanel's X button) — this is what
+  // actually adds/removes a layer of polygons on the map. Whenever that
+  // happens, close the lot detail panel: the layer just changed under it,
+  // so whatever lot/sheet it was showing may no longer even be part of
+  // the current selection, and leaving it open while the map's contents
+  // shift is confusing. Sidebar itself has no knowledge of LotDetailPanel
+  // — it only ever calls this onToggle prop — so this has to live here,
+  // not in Sidebar.tsx. Fires on both adding a selection (meta non-null)
+  // and removing one (meta === null).
   function handleToggle(key: string, meta: SelectionMeta | null) {
     setActiveSelections((prev) => {
       const next = { ...prev };
@@ -840,6 +873,24 @@ function MapViewerPageInner() {
     });
   }
 
+  // Fired when the user picks a result from Sidebar's search bar (see
+  // SearchBar's onSelect -> Sidebar's onSearchSelect prop). Fetches the
+  // full polygon for that lot, then registers it as a real selection under
+  // `search:<id>` — written into BOTH `layerData` (so the polygon shows on
+  // the map immediately, without waiting on the general activeSelections
+  // fetch effect below) and `activeSelections` (so it shows up in
+  // Sidebar's "Selected" tab, can be removed via that row's X button,
+  // included in "Clear all", and can drive the attribute table filter via
+  // "view in table" — exactly like a year layer). `query: { id: result.id }`
+  // matches what the activeSelections-driven fetch effect expects if this
+  // entry is ever dropped from layerData and needs to be refetched (e.g.
+  // after an unrelated remount) — it hits the same /api/map/lots?id=
+  // endpoint used here.
+  //
+  // Re-searching the same lot re-adds the same key (a no-op if it's
+  // already selected); searching a different lot adds an additional
+  // Selected entry alongside any existing ones, same multi-select
+  // behavior as picking several years.
   async function handleSearchSelect(result: LotSearchResult) {
     setSearchError(false);
     try {
@@ -848,7 +899,16 @@ function MapViewerPageInner() {
       const fc: { features: LotFeature[] } = await r.json();
       const feature = fc.features[0];
       if (!feature) throw new Error("Lot not found");
-      setLayerData((d) => ({ ...d, search: [feature] }));
+
+      const key = `search:${result.id}`;
+      const label = `${result.owner || "Unnamed owner"} · Lot ${result.lotNo ?? "—"}`;
+
+      setLayerData((d) => ({ ...d, [key]: [feature] }));
+      setActiveSelections((prev) => ({
+        ...prev,
+        [key]: { query: { id: result.id }, label },
+      }));
+
       openFeature(feature);
     } catch {
       setSearchError(true);
@@ -910,11 +970,16 @@ function MapViewerPageInner() {
         });
     });
 
+    // Drop any layerData entry whose key no longer has a matching
+    // activeSelections entry. Search results now live in activeSelections
+    // (under `search:<id>` keys — see handleSearchSelect above) just like
+    // year layers do, so they're cleaned up here the same way; no special
+    // case needed for a bare "search" key anymore.
     setLayerData((d) => {
       let changed = false;
       const next: typeof d = {};
       for (const k of Object.keys(d)) {
-        if (activeSelections[k] || k === "search") next[k] = d[k];
+        if (activeSelections[k]) next[k] = d[k];
         else changed = true;
       }
       return changed ? next : d;

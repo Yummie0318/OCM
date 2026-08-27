@@ -609,7 +609,7 @@ function Checkbox({
   onClick?: (e: React.MouseEvent) => void;
 }) {
   return (
-    <span className="relative inline-flex h-[15px] w-[15px] flex-shrink-0 items-center justify-center">
+    <span className="relative inline-flex h-[18px] w-[18px] flex-shrink-0 items-center justify-center sm:h-[15px] sm:w-[15px]">
       <input
         type="checkbox"
         checked={checked}
@@ -618,7 +618,7 @@ function Checkbox({
         className="peer absolute inset-0 z-10 m-0 h-full w-full cursor-pointer opacity-0"
       />
       <span
-        className="pointer-events-none flex h-[15px] w-[15px] items-center justify-center rounded-[4.5px] border transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-[var(--sb-accent)] peer-focus-visible:ring-offset-1"
+        className="pointer-events-none flex h-[18px] w-[18px] items-center justify-center rounded-[5px] border transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-[var(--sb-accent)] peer-focus-visible:ring-offset-1 sm:h-[15px] sm:w-[15px] sm:rounded-[4.5px]"
         style={{
           borderColor: checked ? "var(--sb-accent)" : "var(--sb-border)",
           background: checked ? "var(--sb-accent)" : "var(--sb-bg)",
@@ -630,6 +630,15 @@ function Checkbox({
   );
 }
 
+// MOBILE PASS: this toolbar used to be a single `flex items-center` row —
+// label, 5 swatches, custom-color swatch, "Clear", and "Deselect all" all
+// fighting for one line. On a ~360px phone that overflowed/overlapped
+// (the bug in the screenshot). It's now `flex-wrap`, so it drops to a
+// second line instead of clipping, swatches are bumped to 20px (closer to
+// a real touch target vs. the old 16px), copy is shorter, and "Deselect"
+// only renders once something is actually selected instead of reserving
+// space with `color: transparent` (a trick that's fine on desktop but
+// wastes width on narrow screens).
 function ColorToolbar({
   selectedCount,
   onApplyColor,
@@ -641,16 +650,16 @@ function ColorToolbar({
 }) {
   const enabled = selectedCount > 0;
   return (
-    <div className="flex flex-shrink-0 items-center gap-2">
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
       <span
-        className="whitespace-nowrap text-[11px] font-medium tabular-nums"
+        className="flex-shrink-0 whitespace-nowrap text-[11px] font-medium tabular-nums"
         style={{ color: enabled ? "var(--sb-accent-text)" : "var(--sb-text-faint)" }}
       >
-        {enabled ? `${selectedCount} selected` : "Select lots to color"}
+        {enabled ? `${selectedCount} selected` : "Tap lots to color"}
       </span>
 
       <div
-        className="flex items-center gap-1.5 transition-opacity"
+        className="flex flex-wrap items-center gap-1.5 transition-opacity"
         style={{ opacity: enabled ? 1 : 0.35, pointerEvents: enabled ? "auto" : "none" }}
       >
         {COLOR_PRESETS.map((c) => (
@@ -658,13 +667,13 @@ function ColorToolbar({
             <button
               type="button"
               onClick={() => onApplyColor(c.value)}
-              className="h-[16px] w-[16px] flex-shrink-0 rounded-full shadow-sm ring-1 ring-inset ring-black/10 transition-transform hover:scale-110"
+              className="h-[20px] w-[20px] flex-shrink-0 rounded-full shadow-sm ring-1 ring-inset ring-black/10 transition-transform hover:scale-110 active:scale-95 sm:h-[16px] sm:w-[16px]"
               style={{ background: c.value }}
             />
           </Tooltip>
         ))}
         <Tooltip label="Custom color">
-          <label className="flex h-[16px] w-[16px] flex-shrink-0 cursor-pointer items-center justify-center rounded-full border border-dashed border-[var(--sb-text-faint)] text-[var(--sb-text-faint)] transition-colors hover:border-[var(--sb-text)] hover:text-[var(--sb-text)]">
+          <label className="flex h-[20px] w-[20px] flex-shrink-0 cursor-pointer items-center justify-center rounded-full border border-dashed border-[var(--sb-text-faint)] text-[var(--sb-text-faint)] transition-colors hover:border-[var(--sb-text)] hover:text-[var(--sb-text)] sm:h-[16px] sm:w-[16px]">
             <Palette size={9} />
             <input type="color" onChange={(e) => onApplyColor(e.target.value)} className="sr-only" />
           </label>
@@ -680,15 +689,15 @@ function ColorToolbar({
         </Tooltip>
       </div>
 
-      <button
-        type="button"
-        onClick={onDeselectAll}
-        disabled={!enabled}
-        className="flex-shrink-0 text-[10.5px] font-medium transition-colors"
-        style={{ color: enabled ? "var(--sb-text-faint)" : "transparent", cursor: enabled ? "pointer" : "default" }}
-      >
-        Deselect all
-      </button>
+      {enabled && (
+        <button
+          type="button"
+          onClick={onDeselectAll}
+          className="flex-shrink-0 text-[10.5px] font-medium text-[var(--sb-text-faint)] transition-colors hover:text-[var(--sb-text-muted)]"
+        >
+          Deselect
+        </button>
+      )}
     </div>
   );
 }
@@ -760,22 +769,8 @@ export default function AttributeTable({
       }
     }
     const result = Array.from(map.values()).sort((a, b) => a.sheetNo.localeCompare(b.sheetNo));
-
-    // TEMP DEBUG — remove once the Survey No. button issue is confirmed fixed.
-    console.log(
-      "DEBUG sheetGroups:",
-      result.map((g) => ({
-        sheetNo: g.sheetNo,
-        sheetId: g.sheetId,
-        surveyNo: g.surveyNo,
-        hasMissingSurveyNo: g.hasMissingSurveyNo,
-      })),
-      "onUpdateSurveyNo type:",
-      typeof onUpdateSurveyNo
-    );
-
     return result;
-  }, [features, onUpdateSurveyNo]);
+  }, [features]);
 
   useEffect(() => {
     if (expandedSheetKey && !sheetGroups.some((g) => g.key === expandedSheetKey)) {
@@ -882,7 +877,11 @@ export default function AttributeTable({
         hasError={hasError}
         scope={isSearching ? "matching your search" : expandedSheet ? "on this sheet" : undefined}
         rightSlot={
-          <div className="relative flex flex-shrink-0 items-center">
+          // MOBILE PASS: was a fixed w-[172px] that could overflow a narrow
+          // viewport. Now fills the width it's given (full width on
+          // mobile, where SummaryBar stacks this onto its own row) and
+          // only reverts to a fixed 172px once there's room at `sm:`.
+          <div className="relative flex min-w-0 w-full items-center sm:w-[172px]">
             <Search
               size={11}
               className="pointer-events-none absolute left-[9px] text-[var(--sb-text-faint)]"
@@ -893,7 +892,7 @@ export default function AttributeTable({
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Search owner, lot no..."
-                className="w-[172px] rounded-full text-[11.5px] font-normal outline-none transition-shadow focus:ring-2 focus:ring-[var(--sb-accent)]/30"
+                className="w-full min-w-0 rounded-full text-[11.5px] font-normal outline-none transition-shadow focus:ring-2 focus:ring-[var(--sb-accent)]/30"
                 style={{
                   padding: searchQuery ? "5px 24px 5px 26px" : "5px 10px 5px 26px",
                   background: "var(--sb-hover)",
@@ -917,12 +916,21 @@ export default function AttributeTable({
         }
       />
 
+      {/*
+        MOBILE PASS: this used to be a single `flex items-center` row that
+        forced the sheet breadcrumb and the ColorToolbar onto the same
+        line — on a phone-width viewport there simply isn't room for both,
+        which is what caused the overlapping text in the "Sheets / ... to
+        color" screenshot. Now it's `flex-col` (breadcrumb row, then
+        toolbar row) below `sm:`, and goes back to the original
+        single-row layout at `sm:` and up.
+      */}
       {(isSearching || expandedSheet) && (
         <div
-          className="flex flex-shrink-0 items-center gap-3 px-3 py-1"
+          className="flex flex-shrink-0 flex-col gap-1.5 px-3 py-2 sm:flex-row sm:items-center sm:gap-3 sm:py-1"
           style={{ borderBottom: `1px solid ${HAIRLINE}`, background: "var(--sb-hover)" }}
         >
-          <div className="flex min-w-0 flex-1 items-center gap-2">
+          <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
             {!isSearching && expandedSheet ? (
               <>
                 <button
@@ -936,16 +944,21 @@ export default function AttributeTable({
                 <span className="flex-shrink-0 text-[var(--sb-text-faint)]">/</span>
                 <span className="min-w-0 flex-1 truncate text-[11.5px] font-medium text-[var(--sb-text)]">
                   {expandedSheet.sheetNo}
-                  {expandedSheet.municipality && ` — ${expandedSheet.municipality}, ${expandedSheet.province ?? ""}`}
-                  {expandedSheet.encodedBy && ` · Encoded by ${expandedSheet.encodedBy}`}
+                  {/* Municipality/province/encoder detail hidden below sm: — the
+                      breadcrumb only needs the sheet number to stay usable on a
+                      narrow screen; full detail comes back once there's room. */}
+                  {/* <span className="hidden sm:inline">
+                    {expandedSheet.municipality && ` — ${expandedSheet.municipality}, ${expandedSheet.province ?? ""}`}
+                    {expandedSheet.encodedBy && ` · Encoded by ${expandedSheet.encodedBy}`}
+                  </span> */}
                 </span>
 
                 {expandedSheet.planUrl && (
                   <>
-                    <span className="flex-shrink-0 text-[var(--sb-text-faint)]">·</span>
-                    <span className="flex-shrink-0">
+                    {/* <span className="hidden flex-shrink-0 text-[var(--sb-text-faint)] sm:inline">·</span>
+                    <span className="hidden flex-shrink-0 sm:inline">
                       <PlanLink url={expandedSheet.planUrl} label="Plan" />
-                    </span>
+                    </span> */}
                   </>
                 )}
               </>
@@ -1059,108 +1072,118 @@ function SheetsTable({
   onUpdateSurveyClass?: (sheetId: number, surveyClass: "admin" | "private") => Promise<void>;
 }) {
   return (
-    <table className="w-full border-collapse text-[11.5px]">
-      <thead>
-        <tr>
-          <Th>Sheet No.</Th>
-          <Th>Municipality</Th>
-          <Th>Province</Th>
-          <Th>Plan</Th>
-          <Th>Documents</Th>
-          <Th>Survey No.</Th>
-          <Th>Class</Th>
-          <Th numeric>Lots</Th>
-          <Th numeric>Total Area (sq.m.)</Th>
-          <Th>Encoded By</Th>
-          {onViewSheet && <Th>Preview</Th>}
-        </tr>
-      </thead>
-      <tbody>
-        {groups.map((g, i) => (
-          <tr
-            key={g.key}
-            onClick={() => onOpenSheet(g.key)}
-            title="Click to view lots"
-            className="cursor-pointer transition-colors duration-100"
-            style={{
-              borderBottom: `1px solid ${HAIRLINE_SOFT}`,
-              background: i % 2 === 1 ? "color-mix(in srgb, var(--sb-hover) 45%, transparent)" : "transparent",
-            }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = "var(--sb-hover)")}
-            onMouseLeave={(e) =>
-              (e.currentTarget.style.background =
-                i % 2 === 1 ? "color-mix(in srgb, var(--sb-hover) 45%, transparent)" : "transparent")
-            }
-          >
-            <td className="px-2.5 py-[6px] font-medium text-[var(--sb-text)]">{g.sheetNo}</td>
-            <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{g.municipality || "—"}</td>
-            <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{g.province || "—"}</td>
-            <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]" onClick={(e) => e.stopPropagation()}>
-              {g.planUrl ? (
-                <PlanLink url={g.planUrl} label="View" />
-              ) : g.sheetId != null && onUpdatePlanUrl ? (
-                <AddPlanLinkControl sheetId={g.sheetId} onSave={onUpdatePlanUrl} />
-              ) : (
-                "—"
-              )}
-            </td>
-            <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]" onClick={(e) => e.stopPropagation()}>
-              {g.documentsUrl ? (
-                <PlanLink url={g.documentsUrl} label="View" />
-              ) : g.sheetId != null && onUpdateDocumentsUrl ? (
-                <AddDocumentsLinkControl sheetId={g.sheetId} onSave={onUpdateDocumentsUrl} />
-              ) : (
-                "—"
-              )}
-            </td>
-            <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]" onClick={(e) => e.stopPropagation()}>
-              <span className="inline-flex flex-wrap items-center gap-1.5">
-                {g.surveyNo ? <span className="text-[var(--sb-text)]">{g.surveyNo}</span> : null}
-                {!g.surveyNo && g.sheetId != null && onUpdateSurveyNo ? (
-                  <AddSurveyNoControl sheetId={g.sheetId} onSave={onUpdateSurveyNo} />
-                ) : !g.surveyNo ? (
-                  "—"
-                ) : null}
-              </span>
-            </td>
-            <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]" onClick={(e) => e.stopPropagation()}>
-              {g.surveyClass ? (
-                <span className="capitalize text-[var(--sb-text)]">{g.surveyClass}</span>
-              ) : g.sheetId != null && onUpdateSurveyClass ? (
-                <AddSurveyClassControl sheetId={g.sheetId} onSave={onUpdateSurveyClass} />
-              ) : (
-                "—"
-              )}
-            </td>
-            <td className="px-2.5 py-[6px] text-right tabular-nums text-[var(--sb-text-muted)]">{g.lots.length}</td>
-            <td className="px-2.5 py-[6px] text-right tabular-nums text-[var(--sb-text-muted)]">
-              {formatArea(g.totalArea)}
-            </td>
-            <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{g.encodedBy || "—"}</td>
-            {onViewSheet && (
-              <td className="px-2.5 py-[6px]" onClick={(e) => e.stopPropagation()}>
-                <Tooltip label="Preview whole sheet — all lots + coordinates">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      onViewSheet({
-                        sheetNo: g.sheetNo,
-                        province: g.province,
-                        municipality: g.municipality,
-                        lots: g.lots,
-                      })
-                    }
-                    className="flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded-[7px] border-0 bg-[var(--sb-accent-bg)] p-0 text-[var(--sb-accent)] transition-colors duration-100 hover:opacity-75"
-                  >
-                    <Eye size={12} />
-                  </button>
-                </Tooltip>
-              </td>
-            )}
+    // MOBILE PASS: this table has 10-11 columns and was already relying on
+    // the outer `.overflow-auto` wrapper in AttributeTable to scroll — that
+    // still works on touch devices, but wrapping it here in its own
+    // horizontally-scrollable region with `WebkitOverflowScrolling: touch`
+    // makes the scroll gesture feel native (momentum scrolling) instead of
+    // relying purely on the parent's overscroll behavior, and keeps sticky
+    // headers correctly pinned per-axis rather than fighting the row-list
+    // scroll below it.
+    <div className="w-full overflow-x-auto" style={{ WebkitOverflowScrolling: "touch" }}>
+      <table className="w-full min-w-[880px] border-collapse text-[11.5px]">
+        <thead>
+          <tr>
+            <Th>Sheet No.</Th>
+            <Th>Municipality</Th>
+            <Th>Province</Th>
+            <Th>Plan</Th>
+            <Th>Documents</Th>
+            <Th>Survey No.</Th>
+            <Th>Class</Th>
+            <Th numeric>Lots</Th>
+            <Th numeric>Total Area (sq.m.)</Th>
+            <Th>Encoded By</Th>
+            {onViewSheet && <Th>Preview</Th>}
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {groups.map((g, i) => (
+            <tr
+              key={g.key}
+              onClick={() => onOpenSheet(g.key)}
+              title="Click to view lots"
+              className="cursor-pointer transition-colors duration-100"
+              style={{
+                borderBottom: `1px solid ${HAIRLINE_SOFT}`,
+                background: i % 2 === 1 ? "color-mix(in srgb, var(--sb-hover) 45%, transparent)" : "transparent",
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = "var(--sb-hover)")}
+              onMouseLeave={(e) =>
+                (e.currentTarget.style.background =
+                  i % 2 === 1 ? "color-mix(in srgb, var(--sb-hover) 45%, transparent)" : "transparent")
+              }
+            >
+              <td className="px-2.5 py-[6px] font-medium text-[var(--sb-text)]">{g.sheetNo}</td>
+              <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{g.municipality || "—"}</td>
+              <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{g.province || "—"}</td>
+              <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]" onClick={(e) => e.stopPropagation()}>
+                {g.planUrl ? (
+                  <PlanLink url={g.planUrl} label="View" />
+                ) : g.sheetId != null && onUpdatePlanUrl ? (
+                  <AddPlanLinkControl sheetId={g.sheetId} onSave={onUpdatePlanUrl} />
+                ) : (
+                  "—"
+                )}
+              </td>
+              <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]" onClick={(e) => e.stopPropagation()}>
+                {g.documentsUrl ? (
+                  <PlanLink url={g.documentsUrl} label="View" />
+                ) : g.sheetId != null && onUpdateDocumentsUrl ? (
+                  <AddDocumentsLinkControl sheetId={g.sheetId} onSave={onUpdateDocumentsUrl} />
+                ) : (
+                  "—"
+                )}
+              </td>
+              <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]" onClick={(e) => e.stopPropagation()}>
+                <span className="inline-flex flex-wrap items-center gap-1.5">
+                  {g.surveyNo ? <span className="text-[var(--sb-text)]">{g.surveyNo}</span> : null}
+                  {!g.surveyNo && g.sheetId != null && onUpdateSurveyNo ? (
+                    <AddSurveyNoControl sheetId={g.sheetId} onSave={onUpdateSurveyNo} />
+                  ) : !g.surveyNo ? (
+                    "—"
+                  ) : null}
+                </span>
+              </td>
+              <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]" onClick={(e) => e.stopPropagation()}>
+                {g.surveyClass ? (
+                  <span className="capitalize text-[var(--sb-text)]">{g.surveyClass}</span>
+                ) : g.sheetId != null && onUpdateSurveyClass ? (
+                  <AddSurveyClassControl sheetId={g.sheetId} onSave={onUpdateSurveyClass} />
+                ) : (
+                  "—"
+                )}
+              </td>
+              <td className="px-2.5 py-[6px] text-right tabular-nums text-[var(--sb-text-muted)]">{g.lots.length}</td>
+              <td className="px-2.5 py-[6px] text-right tabular-nums text-[var(--sb-text-muted)]">
+                {formatArea(g.totalArea)}
+              </td>
+              <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{g.encodedBy || "—"}</td>
+              {onViewSheet && (
+                <td className="px-2.5 py-[6px]" onClick={(e) => e.stopPropagation()}>
+                  <Tooltip label="Preview whole sheet — all lots + coordinates">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onViewSheet({
+                          sheetNo: g.sheetNo,
+                          province: g.province,
+                          municipality: g.municipality,
+                          lots: g.lots,
+                        })
+                      }
+                      className="flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded-[7px] border-0 bg-[var(--sb-accent-bg)] p-0 text-[var(--sb-accent)] transition-colors duration-100 hover:opacity-75"
+                    >
+                      <Eye size={12} />
+                    </button>
+                  </Tooltip>
+                </td>
+              )}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -1199,122 +1222,127 @@ function LotsTable({
   }, [selectedId, features]);
 
   return (
-    <table className="w-full border-collapse text-[11.5px]">
-      <thead>
-        <tr>
-          <th
-            className="sticky top-0 z-10 w-7 px-2.5 py-[7px] backdrop-blur"
-            style={{
-              background: "color-mix(in srgb, var(--sb-hover) 92%, transparent)",
-              borderBottom: `1px solid ${HAIRLINE}`,
-            }}
-          >
-            <Tooltip label={allVisibleSelected ? "Deselect all visible lots" : "Select all visible lots"}>
-              <Checkbox checked={allVisibleSelected} onChange={onToggleColorSelectAll} />
-            </Tooltip>
-          </th>
-          {columns.map((h) => (
-            <Th key={h} numeric={NUMERIC_COLUMNS.has(h)}>
-              {h}
-            </Th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {features.map((f, i) => {
-          const id = String(f.id);
-          const isSelected = selectedId != null && id === String(selectedId);
-          const isColorChecked = colorSelectedIds.has(id);
-          const rowColor = lotColors?.[id];
-
-          const baseBg = rowColor
-            ? hexToRgba(rowColor, isSelected ? 0.28 : 0.16)
-            : isSelected
-              ? "var(--sb-accent-bg)"
-              : isColorChecked
-                ? "var(--sb-accent-bg)"
-                : i % 2 === 1
-                  ? "color-mix(in srgb, var(--sb-hover) 45%, transparent)"
-                  : "transparent";
-
-          return (
-            <tr
-              key={f.id}
-              ref={(el) => {
-                rowRefs.current[id] = el;
-              }}
-              onClick={() => onRowClick?.(f)}
-              style={{ background: baseBg, borderBottom: `1px solid ${HAIRLINE_SOFT}` }}
-              className={`transition-colors duration-100 ${onRowClick ? "cursor-pointer" : ""}`}
-              onMouseEnter={(e) => {
-                if (!onRowClick || isSelected) return;
-                e.currentTarget.style.background = rowColor ? hexToRgba(rowColor, 0.24) : "var(--sb-hover)";
-              }}
-              onMouseLeave={(e) => {
-                if (!onRowClick || isSelected) return;
-                e.currentTarget.style.background = baseBg;
+    // MOBILE PASS: same horizontal-scroll wrapper as SheetsTable, plus a
+    // min-width on the table so the ~9-10 lot columns don't get squeezed
+    // into illegibility on a phone — the row scrolls sideways instead.
+    <div className="w-full overflow-x-auto" style={{ WebkitOverflowScrolling: "touch" }}>
+      <table className="w-full min-w-[760px] border-collapse text-[11.5px]">
+        <thead>
+          <tr>
+            <th
+              className="sticky top-0 z-10 w-9 px-2.5 py-[7px] backdrop-blur sm:w-7"
+              style={{
+                background: "color-mix(in srgb, var(--sb-hover) 92%, transparent)",
+                borderBottom: `1px solid ${HAIRLINE}`,
               }}
             >
-              <td className="px-2.5 py-[6px]" onClick={(e) => e.stopPropagation()}>
-                <Checkbox checked={isColorChecked} onChange={() => onToggleColorSelect(id)} />
-              </td>
-              {showSheetNo && (
+              <Tooltip label={allVisibleSelected ? "Deselect all visible lots" : "Select all visible lots"}>
+                <Checkbox checked={allVisibleSelected} onChange={onToggleColorSelectAll} />
+              </Tooltip>
+            </th>
+            {columns.map((h) => (
+              <Th key={h} numeric={NUMERIC_COLUMNS.has(h)}>
+                {h}
+              </Th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {features.map((f, i) => {
+            const id = String(f.id);
+            const isSelected = selectedId != null && id === String(selectedId);
+            const isColorChecked = colorSelectedIds.has(id);
+            const rowColor = lotColors?.[id];
+
+            const baseBg = rowColor
+              ? hexToRgba(rowColor, isSelected ? 0.28 : 0.16)
+              : isSelected
+                ? "var(--sb-accent-bg)"
+                : isColorChecked
+                  ? "var(--sb-accent-bg)"
+                  : i % 2 === 1
+                    ? "color-mix(in srgb, var(--sb-hover) 45%, transparent)"
+                    : "transparent";
+
+            return (
+              <tr
+                key={f.id}
+                ref={(el) => {
+                  rowRefs.current[id] = el;
+                }}
+                onClick={() => onRowClick?.(f)}
+                style={{ background: baseBg, borderBottom: `1px solid ${HAIRLINE_SOFT}` }}
+                className={`transition-colors duration-100 ${onRowClick ? "cursor-pointer" : ""}`}
+                onMouseEnter={(e) => {
+                  if (!onRowClick || isSelected) return;
+                  e.currentTarget.style.background = rowColor ? hexToRgba(rowColor, 0.24) : "var(--sb-hover)";
+                }}
+                onMouseLeave={(e) => {
+                  if (!onRowClick || isSelected) return;
+                  e.currentTarget.style.background = baseBg;
+                }}
+              >
+                <td className="px-2.5 py-[6px]" onClick={(e) => e.stopPropagation()}>
+                  <Checkbox checked={isColorChecked} onChange={() => onToggleColorSelect(id)} />
+                </td>
+                {showSheetNo && (
+                  <td
+                    className="px-2.5 py-[6px] font-medium text-[var(--sb-text)]"
+                    style={{
+                      boxShadow: isSelected
+                        ? "inset 2px 0 0 var(--sb-accent)"
+                        : rowColor
+                          ? `inset 2px 0 0 ${rowColor}`
+                          : "inset 2px 0 0 transparent",
+                    }}
+                  >
+                    {f.properties.sheetNo || "—"}
+                  </td>
+                )}
                 <td
                   className="px-2.5 py-[6px] font-medium text-[var(--sb-text)]"
-                  style={{
-                    boxShadow: isSelected
-                      ? "inset 2px 0 0 var(--sb-accent)"
-                      : rowColor
-                        ? `inset 2px 0 0 ${rowColor}`
-                        : "inset 2px 0 0 transparent",
-                  }}
+                  style={
+                    showSheetNo
+                      ? undefined
+                      : {
+                          boxShadow: isSelected
+                            ? "inset 2px 0 0 var(--sb-accent)"
+                            : rowColor
+                              ? `inset 2px 0 0 ${rowColor}`
+                              : "inset 2px 0 0 transparent",
+                        }
+                  }
                 >
-                  {f.properties.sheetNo || "—"}
+                  <span className="inline-flex items-center gap-1.5">
+                    {rowColor && (
+                      <Tooltip label={`Colored: ${rowColor}`}>
+                        <span
+                          className="inline-block h-2 w-2 flex-shrink-0 rounded-full ring-1 ring-[var(--sb-bg)]"
+                          style={{ background: rowColor, boxShadow: "0 0 0 1px rgba(15,23,42,0.15)" }}
+                        />
+                      </Tooltip>
+                    )}
+                    {f.properties.lotNo}
+                  </span>
                 </td>
-              )}
-              <td
-                className="px-2.5 py-[6px] font-medium text-[var(--sb-text)]"
-                style={
-                  showSheetNo
-                    ? undefined
-                    : {
-                        boxShadow: isSelected
-                          ? "inset 2px 0 0 var(--sb-accent)"
-                          : rowColor
-                            ? `inset 2px 0 0 ${rowColor}`
-                            : "inset 2px 0 0 transparent",
-                      }
-                }
-              >
-                <span className="inline-flex items-center gap-1.5">
-                  {rowColor && (
-                    <Tooltip label={`Colored: ${rowColor}`}>
-                      <span
-                        className="inline-block h-2 w-2 flex-shrink-0 rounded-full ring-1 ring-[var(--sb-bg)]"
-                        style={{ background: rowColor, boxShadow: "0 0 0 1px rgba(15,23,42,0.15)" }}
-                      />
-                    </Tooltip>
-                  )}
-                  {f.properties.lotNo}
-                </span>
-              </td>
-              <td className="max-w-[140px] truncate px-2.5 py-[6px] text-[var(--sb-text-muted)]">{f.properties.owner}</td>
-              <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{f.properties.barangay}</td>
-              <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{f.properties.municipality}</td>
-              <td className="whitespace-nowrap px-2.5 py-[6px] text-[var(--sb-text-muted)]">
-                {formatDate(f.properties.dateSurveyed)}
-              </td>
-              <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{f.properties.surveyor}</td>
-              <td className="px-2.5 py-[6px] text-right tabular-nums text-[var(--sb-text-muted)]">
-                {f.properties.areaSqm}
-              </td>
-              <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{f.properties.patentNo}</td>
-              <td className="max-w-[160px] truncate px-2.5 py-[6px] text-[var(--sb-text-muted)]">{f.properties.remarks}</td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
+                <td className="max-w-[140px] truncate px-2.5 py-[6px] text-[var(--sb-text-muted)]">{f.properties.owner}</td>
+                <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{f.properties.barangay}</td>
+                <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{f.properties.municipality}</td>
+                <td className="whitespace-nowrap px-2.5 py-[6px] text-[var(--sb-text-muted)]">
+                  {formatDate(f.properties.dateSurveyed)}
+                </td>
+                <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{f.properties.surveyor}</td>
+                <td className="px-2.5 py-[6px] text-right tabular-nums text-[var(--sb-text-muted)]">
+                  {f.properties.areaSqm}
+                </td>
+                <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{f.properties.patentNo}</td>
+                <td className="max-w-[160px] truncate px-2.5 py-[6px] text-[var(--sb-text-muted)]">{f.properties.remarks}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

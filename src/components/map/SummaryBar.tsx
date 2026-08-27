@@ -22,7 +22,15 @@
 // only consumer) automatically tracks the sidebar's light/dark toggle.
 // Requires an ancestor <SidebarThemeProvider> (see SidebarThemeContext.tsx).
 //
-// DENSITY / VISUAL PASS (this pass): retuned to match AttributeTable's
+// MOBILE PASS (this pass): the row now wraps instead of forcing the count
+// text and the rightSlot (search box) onto one line that overflows on
+// narrow viewports. Below `sm:` the count/total sits on its own line and
+// rightSlot gets a full-width row underneath it; at `sm:` and up it goes
+// back to the original single-row, space-between layout. `min-w-0` was
+// added throughout so flex children can actually shrink instead of
+// forcing the row wider than the viewport.
+//
+// DENSITY / VISUAL PASS (prior pass): retuned to match AttributeTable's
 // Apple-style pass —
 //   - Type dropped from 13px to 11.5–12px, count/area now tabular-nums so
 //     the number doesn't jump width as it changes.
@@ -58,13 +66,16 @@ export default function SummaryBar({ count, totalArea, truncated, hasError, scop
 
   return (
     <div
-      className="flex flex-shrink-0 items-center justify-between gap-3 px-2.5 py-[7px]"
+      className="flex flex-shrink-0 flex-col gap-2 px-2.5 py-[7px] sm:flex-row sm:items-center sm:justify-between sm:gap-3"
       style={{
         borderBottom: `1px solid ${hairline}`,
         background: theme.bgElevated,
       }}
     >
-      <span className="flex-shrink-0 tabular-nums text-[12px] font-semibold" style={{ color: theme.text }}>
+      <span
+        className="min-w-0 flex-shrink-0 truncate tabular-nums text-[12px] font-semibold"
+        style={{ color: theme.text }}
+      >
         {count.toLocaleString()} lot{count === 1 ? "" : "s"}
         {" "}
         <span className="font-normal opacity-40">·</span>{" "}
@@ -73,20 +84,26 @@ export default function SummaryBar({ count, totalArea, truncated, hasError, scop
         </span>
       </span>
 
-      <div className="flex min-w-0 items-center gap-2.5">
-        {truncated && (
-          <span className="flex items-center gap-1.5 whitespace-nowrap text-[11.5px] font-medium text-amber-600">
-            <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-amber-500" />
-            Showing first {count.toLocaleString()} — narrow your selection to see the rest
-          </span>
+      <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:gap-2.5">
+        {(truncated || hasError) && (
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
+            {truncated && (
+              <span className="flex min-w-0 items-center gap-1.5 text-[11.5px] font-medium text-amber-600">
+                <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-amber-500" />
+                <span className="min-w-0 truncate sm:whitespace-nowrap">
+                  Showing first {count.toLocaleString()} — narrow your selection to see the rest
+                </span>
+              </span>
+            )}
+            {hasError && (
+              <span className="flex min-w-0 items-center gap-1.5 text-[11.5px] font-medium text-red-600">
+                <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-red-500" />
+                <span className="min-w-0 truncate sm:whitespace-nowrap">Some selections failed to load</span>
+              </span>
+            )}
+          </div>
         )}
-        {hasError && (
-          <span className="flex items-center gap-1.5 whitespace-nowrap text-[11.5px] font-medium text-red-600">
-            <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-red-500" />
-            Some selections failed to load
-          </span>
-        )}
-        {rightSlot}
+        {rightSlot && <div className="min-w-0 flex-1 sm:flex-none">{rightSlot}</div>}
       </div>
     </div>
   );

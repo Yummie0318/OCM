@@ -2,7 +2,19 @@
 
 // Target path: src/components/map/Sidebar.tsx
 //
-// AUTH WIRING (this pass): added an optional `userType` prop. When present,
+// SEARCH RESULTS IN "SELECTED" TAB (this pass): SelectedPanel's rows were
+// always rendered with a CalendarDays icon, which made sense when every
+// entry was a year layer but reads oddly now that a picked search result
+// (keyed `search:<id>` — see handleSearchSelect in map/page.tsx) can show
+// up in this same list. No prop changes needed here — activeSelections was
+// already generic over any key — this just swaps the leading icon to
+// SearchIcon when the row's key starts with "search:" so a searched lot is
+// visually distinguishable from a year layer at a glance. Everything else
+// (remove via X -> onToggle(key, null), "view in table", "Clear all") was
+// already agnostic to what kind of key it's operating on and needed no
+// changes.
+//
+// AUTH WIRING (earlier pass): added an optional `userType` prop. When present,
 // a small pill badge (e.g. "Admin") renders next to the username in the
 // expanded account footer, and gets appended to the tooltip label in the
 // collapsed rail. This is purely presentational — the actual userName/
@@ -12,7 +24,7 @@
 // are left in place as a graceful fallback for the brief window before
 // that fetch resolves.
 //
-// REFRESH WIRING (this pass): added an optional `municipalitiesRefreshKey`
+// REFRESH WIRING (earlier pass): added an optional `municipalitiesRefreshKey`
 // prop. Bump it (e.g. with Date.now()) from the map page after a lot sheet
 // saves successfully, and this component will:
 //   1. Refetch the top-level municipality list/counts.
@@ -516,7 +528,7 @@ export default function Sidebar({
       <div className="flex flex-shrink-0 items-center gap-2.5 pb-3">
         {brand}
         <div className="min-w-0 flex-1">
-          <div className="truncate text-[14px] font-bold tracking-tight text-[var(--sb-text)]">OCM</div>
+          <div className="truncate text-[14px] font-bold tracking-tight text-[var(--sb-text)]">OCM-A&D</div>
           <div className="truncate text-[10.5px] text-[var(--sb-text-faint)]">PENRO Cagayan</div>
         </div>
         {onCloseMobile ? (
@@ -644,15 +656,18 @@ function TabButton({
 
 // ---------------- "Selected" tab: active selections as a flat list ----------------
 //
-// `sel.label` is a composite "Municipality, Barangay, Year" string (built
-// where the selection is created — see YearRow's onCheck inside
-// BarangayNode below), so rows wrap to two lines instead of truncating to
+// `sel.label` is a composite label — "Municipality, Barangay, Year" for a
+// year layer (built in YearRow's onCheck inside BarangayNode below), or
+// "Owner · Lot No" for a picked search result (built in handleSearchSelect
+// in map/page.tsx) — so rows wrap to two lines instead of truncating to
 // one, with the full text still available via the tooltip.
 //
 // Each row now carries three actions: view-in-table (Table2), and remove
 // (X). The row currently driving the attribute table (activeTableKey ===
 // key) gets an accent ring so it's obvious at a glance which layer is
-// being inspected below.
+// being inspected below. The leading icon distinguishes a search result
+// (`search:<id>` key) from a year layer (`year:<barangayId>:<yearId>` key)
+// so the two kinds of entries don't look identical in the list.
 
 function SelectedPanel({
   activeEntries,
@@ -708,6 +723,11 @@ function SelectedPanel({
       <div className="flex flex-col gap-1">
         {activeEntries.map(([key, sel]) => {
           const isShowing = activeTableKey === key;
+          // A search-result pick (see handleSearchSelect in map/page.tsx)
+          // is keyed `search:<id>`, distinct from a year layer's
+          // `year:<barangayId>:<yearId>` key — swap the leading icon so
+          // the two kinds of rows read differently at a glance.
+          const isSearchResult = key.startsWith("search:");
           return (
             <div
               key={key}
@@ -718,7 +738,11 @@ function SelectedPanel({
                   : `0 0 0 1px ${hairlineSoft}`,
               }}
             >
-              <CalendarDays size={13} className="mt-0.5 flex-shrink-0 text-[var(--sb-accent)]" />
+              {isSearchResult ? (
+                <SearchIcon size={13} className="mt-0.5 flex-shrink-0 text-[var(--sb-accent)]" />
+              ) : (
+                <CalendarDays size={13} className="mt-0.5 flex-shrink-0 text-[var(--sb-accent)]" />
+              )}
               <Tooltip label={sel.label || "Untitled"} side="top">
                 <span className="min-w-0 flex-1 text-[12px] font-medium leading-snug text-[var(--sb-accent-text)]">
                   {sel.label || "Untitled"}
@@ -744,7 +768,12 @@ function SelectedPanel({
               </Tooltip>
 
               {/* Remove button — always red so it's never invisible against
-                  the row's accent background, regardless of theme. */}
+                  the row's accent background, regardless of theme. Works
+                  identically for a year layer or a search result: both
+                  just call onToggle(key, null), which map/page.tsx's
+                  handleToggle uses to drop the key from activeSelections
+                  (and, via the layerData cleanup effect there, from the
+                  map/table too). */}
               <Tooltip label="Remove layer" side="left">
                 <button
                   type="button"
