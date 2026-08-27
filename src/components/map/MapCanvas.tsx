@@ -2,7 +2,32 @@
 
 // Target path: src/components/map/MapCanvas.tsx
 //
-// SYNC MAP CLICKS TO THE TABLE (this pass): clicking a polygon now also
+// BASEMAP TILE SOURCE SWITCH (this pass): Light/Streets/Dark now come from
+// CARTO's raster tile service instead of Esri's gray-canvas/street layers.
+// Esri's Canvas Light/Dark Gray Base and World_Street_Map have limited tile
+// coverage outside the US/Europe — in less-densely-mapped areas they simply
+// stop serving tiles past a fairly low zoom (MapLibre then shows "map data
+// not available"), even though Esri's Satellite layer covers those same
+// zooms fine. CARTO's tiles have solid global coverage at depth, which is
+// why Satellite is left on Esri (no problem there) while Light/Streets/Dark
+// move to CARTO.
+//
+// CARTO now requires a free API key on every tile request (previously
+// anonymous). Get one at https://carto.com/basemaps/apikey/ (no approval
+// queue, emailed back immediately, free up to 5M tile requests/month) and
+// set it as NEXT_PUBLIC_CARTO_API_KEY in .env.local. It's read here via
+// process.env and appended as `?key=` on each tile URL. Without a key set,
+// CARTO serves tiles stamped with an "API KEY REQUIRED" watermark instead
+// of failing outright, so a missing/empty env var degrades visibly rather
+// than silently.
+//
+// Each basemap now carries its own `maxzoom` (added to BasemapConfig)
+// instead of sharing one constant across all four: CARTO's raster tiles
+// support much deeper zoom than Esri's gray-canvas/street layers did, so
+// capping everything to the old shared value would leave zoom capability
+// on the table for the CARTO-backed styles.
+//
+// SYNC MAP CLICKS TO THE TABLE (earlier pass): clicking a polygon now also
 // reports the click via a new `onPolygonClick` prop, fired every time a
 // polygon is clicked — independent of `onFeatureClick`. This is what lets
 // the parent page set `selectedId` from a map click the same way it
@@ -194,42 +219,62 @@ const DEFAULT_HIGHLIGHT_LINE_COLOR = "#b45309";
 
 const BASEMAP_SOURCE_ID = "basemap";
 
-// Shared maxzoom across every basemap option. Esri's World Imagery
-// (satellite) has reliable global coverage only up to about this level in
-// most areas, and capping the CARTO layers to match — instead of their
-// native z20 — means switching basemaps only ever needs to change tile
-// URLs via setTiles(); the source's maxzoom itself is fixed for the life
-// of the map (MapLibre doesn't support changing a raster source's maxzoom
-// in place).
-const BASEMAP_MAXZOOM = 19;
+// Read once at module load. Public by necessity (the browser has to send
+// it on every tile request) — that's normal for map tile keys (same model
+// as a Mapbox/Google Maps public token) and CARTO's key is rate-limited by
+// fair-use rather than treated as a secret. If this is empty, CARTO serves
+// tiles with an "API KEY REQUIRED" watermark instead of erroring outright,
+// so a missing .env.local value degrades visibly rather than silently.
+const CARTO_API_KEY = process.env.NEXT_PUBLIC_CARTO_API_KEY ?? "";
+
+// CARTO's raster tile subdomains — spreading requests across a,b,c,d lets
+// the browser open more parallel connections than a single host would.
+const CARTO_SUBDOMAINS = ["a", "b", "c", "d"];
+
+function cartoTiles(style: "light_all" | "dark_all" | "rastertiles/voyager"): string[] {
+  return CARTO_SUBDOMAINS.map(
+    (s) => `https://${s}.basemaps.cartocdn.com/${style}/{z}/{x}/{y}@2x.png?key=${CARTO_API_KEY}`
+  );
+}
 
 interface BasemapConfig {
   label: string;
   tiles: string[];
   attribution: string;
+  // Max zoom this tile source actually has coverage for. CARTO's raster
+  // tiles support deep zoom globally; Esri's Satellite layer is reliable
+  // to a lower level in most areas. Kept per-basemap (rather than one
+  // shared constant) since the two providers differ here.
+  maxzoom: number;
 }
 
-// Free, no-API-key raster tile sources.
-//   - light / streets / dark: CARTO basemaps, `{ratio}` resolves to "@2x"
-//     on high-DPI screens and "" otherwise so retina displays get sharp
-//     tiles without a separate style.
-//   - satellite: Esri World Imagery, no `{ratio}` token support, so we
-//     just request the standard 256px tiles.
+// Tile sources:
+//   - light / streets / dark: CARTO raster basemaps (Positron / Voyager /
+//     Dark Matter). Require the free API key above — see the file-top
+//     comment for where to get one. `@2x` requests retina tiles
+//     unconditionally, which looks correct on both standard and high-DPI
+//     screens (CARTO's raster tiles don't need the `{ratio}`
+//     token-swap trick some other providers use).
+//   - satellite: Esri World Imagery, no key required, no `{ratio}` token
+//     support, so we just request the standard 256px tiles.
 export const BASEMAPS: Record<BasemapId, BasemapConfig> = {
   light: {
     label: "Light",
-    tiles: ["https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}{ratio}.png"],
-    attribution: "&copy; OpenStreetMap contributors &copy; CARTO",
+    tiles: cartoTiles("light_all"),
+    attribution: "CARTO, OpenStreetMap contributors",
+    maxzoom: 20,
   },
   streets: {
     label: "Streets",
-    tiles: ["https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{ratio}.png"],
-    attribution: "&copy; OpenStreetMap contributors &copy; CARTO",
+    tiles: cartoTiles("rastertiles/voyager"),
+    attribution: "CARTO, OpenStreetMap contributors",
+    maxzoom: 20,
   },
   dark: {
     label: "Dark",
-    tiles: ["https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{ratio}.png"],
-    attribution: "&copy; OpenStreetMap contributors &copy; CARTO",
+    tiles: cartoTiles("dark_all"),
+    attribution: "CARTO, OpenStreetMap contributors",
+    maxzoom: 20,
   },
   satellite: {
     label: "Satellite",
@@ -237,6 +282,7 @@ export const BASEMAPS: Record<BasemapId, BasemapConfig> = {
       "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
     ],
     attribution: "Imagery &copy; Esri",
+    maxzoom: 19,
   },
 };
 
@@ -249,7 +295,7 @@ function buildMapStyle(basemapId: BasemapId) {
         type: "raster" as const,
         tiles: basemap.tiles,
         tileSize: 256,
-        maxzoom: BASEMAP_MAXZOOM,
+        maxzoom: basemap.maxzoom,
         attribution: basemap.attribution,
       },
     },
