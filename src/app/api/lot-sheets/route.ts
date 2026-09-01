@@ -20,6 +20,7 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { getPool } from "@/lib/db";
 import { AUTH_COOKIE_NAME, verifySession } from "@/lib/auth";
+import { logActivity } from "@/lib/activityLog";
 
 // Shape of the JSON body the frontend should POST here. This is intentionally
 // decoupled from your existing `Lot`/`ComputedLot` types — map to this shape
@@ -203,6 +204,24 @@ export async function POST(request: Request) {
     }
 
     await client.query("COMMIT");
+
+    // Logged after COMMIT (not inside the transaction) so a logging
+    // hiccup can never trigger a rollback of an otherwise-successful save
+    // -- logActivity swallows its own errors for the same reason.
+    await logActivity({
+      userId: session.userId,
+      action: "create",
+      entityType: "lot_sheet",
+      entityId: lotSheetId,
+      description: `${session.username} added lot sheet #${body.sheetNo} with ${insertedLots.length} lot(s)`,
+      changes: {
+        after: {
+          sheetNo: body.sheetNo,
+          surveyClass: body.surveyClass ?? null,
+          lotCount: insertedLots.length,
+        },
+      },
+    });
 
     return NextResponse.json(
       { id: lotSheetId, sheetNo: body.sheetNo, lots: insertedLots },

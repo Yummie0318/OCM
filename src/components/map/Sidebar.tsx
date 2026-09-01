@@ -2,7 +2,19 @@
 
 // Target path: src/components/map/Sidebar.tsx
 //
-// SEARCH RESULTS IN "SELECTED" TAB (this pass): SelectedPanel's rows were
+// NOTIFICATION BELL (this pass): added <NotificationBell /> next to the
+// account footer in both layout states:
+//   - Expanded: sits inline with the username/role button, wrapped in a
+//     div with stopPropagation() so clicking the bell doesn't also toggle
+//     the account dropdown open underneath the modal.
+//   - Collapsed: rendered as a standalone icon-only (`compact`) button just
+//     above <AccountFooter compact />, matching the rail's existing icon
+//     stack (Create Shapefile, Search, municipality icons, active-count
+//     pill).
+// The component is fully self-contained (owns its own fetch/poll/modal
+// state), so no new props were added to SidebarProps for this.
+//
+// SEARCH RESULTS IN "SELECTED" TAB (earlier pass): SelectedPanel's rows were
 // always rendered with a CalendarDays icon, which made sense when every
 // entry was a year layer but reads oddly now that a picked search result
 // (keyed `search:<id>` — see handleSearchSelect in map/page.tsx) can show
@@ -105,6 +117,7 @@ import type { SelectionMeta, TreeNodeData, LotSearchResult } from "@/lib/geo";
 import { uiFont, type SidebarTheme } from "./sidebarTheme";
 import { useSidebarTheme } from "./SidebarThemeContext";
 import SearchBar from "./SearchBar";
+import NotificationBell from "@/components/NotificationBell";
 
 interface SidebarProps {
   activeSelections: Record<string, SelectionMeta>;
@@ -411,29 +424,42 @@ export default function Sidebar({
             </button>
           </Tooltip>
         ) : (
-          <button
-            type="button"
-            onClick={() => setAccountMenuOpen((v) => !v)}
-            className="flex w-full items-center justify-start gap-2.5 rounded-[10px] border-0 bg-transparent px-1.5 py-1.5 text-left transition-colors duration-100 hover:bg-[var(--sb-hover)]"
-          >
-            <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-[var(--sb-hover)] text-[var(--sb-text-muted)]">
-              <User size={15} />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-1.5">
-                <span className="truncate text-[12.5px] font-semibold text-[var(--sb-text)]">{userName}</span>
-                {userType && (
-                  <span
-                    className="flex-shrink-0 rounded-full px-1.5 py-[1px] text-[9px] font-bold uppercase tracking-wide"
-                    style={{ background: "var(--sb-accent-bg)", color: "var(--sb-accent-text)" }}
-                  >
-                    {formatUserType(userType)}
-                  </span>
-                )}
+          // NOTE: this used to be a single <button> wrapping the whole row
+          // (avatar + name/email + bell). HTML forbids a <button> nested
+          // inside another <button> -- NotificationBell renders its own
+          // <button> internally, so nesting it inside this one triggered a
+          // React hydration error (invalid DOM nesting), not just a click
+          // conflict. Fixed by splitting this into a flex row containing
+          // two SIBLING buttons: the account-menu toggle (avatar + name +
+          // email) and the bell, instead of one button containing the
+          // other. stopPropagation is no longer needed since there's no
+          // parent/child relationship left to bubble through.
+          <div className="flex w-full items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setAccountMenuOpen((v) => !v)}
+              className="flex min-w-0 flex-1 items-center justify-start gap-2.5 rounded-[10px] border-0 bg-transparent px-1.5 py-1.5 text-left transition-colors duration-100 hover:bg-[var(--sb-hover)]"
+            >
+              <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-[var(--sb-hover)] text-[var(--sb-text-muted)]">
+                <User size={15} />
               </div>
-              <div className="truncate text-[10.5px] text-[var(--sb-text-faint)]">{userEmail}</div>
-            </div>
-          </button>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="truncate text-[12.5px] font-semibold text-[var(--sb-text)]">{userName}</span>
+                  {userType && (
+                    <span
+                      className="flex-shrink-0 rounded-full px-1.5 py-[1px] text-[9px] font-bold uppercase tracking-wide"
+                      style={{ background: "var(--sb-accent-bg)", color: "var(--sb-accent-text)" }}
+                    >
+                      {formatUserType(userType)}
+                    </span>
+                  )}
+                </div>
+                <div className="truncate text-[10.5px] text-[var(--sb-text-faint)]">{userEmail}</div>
+              </div>
+            </button>
+            <NotificationBell />
+          </div>
         )}
       </div>
     );
@@ -511,6 +537,13 @@ export default function Sidebar({
             </div>
           </Tooltip>
         )}
+
+        {/* Notification bell — icon-only variant for the collapsed rail,
+            placed just above the account footer, same spot the active-count
+            pill occupies above it. */}
+        <div className="mt-1.5">
+          <NotificationBell compact />
+        </div>
 
         <AccountFooter compact />
         <style>{`@keyframes sidebar-pulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }`}</style>
