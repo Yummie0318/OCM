@@ -10,24 +10,26 @@
 // nothing was listening on this end, so clicking a "today's activity" row
 // did nothing.
 //
-// Mirrors handleSearchSelect below almost exactly: fetches the full sheet
-// (GET /api/lot-sheets/[id], which returns snake_case columns straight off
-// the table -- NOT the same shape /api/map/lots returns), maps its lots into
-// LotFeature[], registers them under a content-addressed `sheet:<id>` key in
-// BOTH layerData and activeSelections (Sidebar.tsx's SelectedPanel already
-// special-cases `sheet:<id>` keys with a bell icon -- see its
-// isSheetFromLog check), then focuses the map + opens the detail panel on
-// the first lot, same as a search pick. Re-clicking an already-loaded entry
-// just re-focuses instead of re-fetching, same no-op-re-add behavior as
-// re-picking a search result.
+// Mirrors handleSearchSelect below almost exactly: fetches
+// GET /api/map/lots?sheet_id=<id> (the same fully-joined endpoint search
+// uses, and the same one the generic activeSelections fetch effect below
+// would hit to refetch this key later, since its query is
+// { sheet_id: entityId }), registers the returned features under a
+// content-addressed `sheet:<id>` key in BOTH layerData and activeSelections
+// (Sidebar.tsx's SelectedPanel already special-cases `sheet:<id>` keys with
+// a bell icon -- see its isSheetFromLog check), then focuses the map +
+// opens the detail panel on the first lot, same as a search pick.
+// Re-clicking an already-loaded entry just re-focuses instead of
+// re-fetching, same no-op-re-add behavior as re-picking a search result.
 //
-// One thing worth double-checking against your actual schema: GET
-// /api/lot-sheets/[id] returns raw `SELECT l.*` rows for `sheet.lots`, which
-// don't include municipality/barangay names (that route doesn't join for
-// individual lots, only for the sheet's own control point). Those fields
-// are filled with null below rather than guessed at -- if your LotFeature
-// consumers need them populated for a bell-selected lot, that join would
-// need to be added to the lot-sheets route.
+// FIX (this pass, superseding an earlier version): this used to fetch
+// GET /api/lot-sheets/[id] and hand-map its raw `SELECT l.*` rows, which
+// don't include municipality/barangay/province/surveyor names or
+// dateSurveyed (that route only joins those for the sheet's own control
+// point, not for individual lots) -- so a bell-selected sheet always showed
+// those fields as blank in the attribute table, even though the same lot
+// picked via search showed them fine. Switched to /api/map/lots?sheet_id=,
+// which already does every needed join, same as handleSearchSelect below.
 //
 // SEARCH RESULT AS A REAL SELECTION (earlier pass): handleSearchSelect used
 // to shove the picked lot straight into `layerData.search` without ever
@@ -954,15 +956,6 @@ function MapViewerPageInner() {
   // keys with a bell icon there), then focus the map + open the detail
   // panel on the first lot -- the same "project it on the map" effect a
   // search pick gets.
-  //
-  // GET /api/lot-sheets/[id] returns raw snake_case columns straight off
-  // the DB (sheet.lots is `SELECT l.*`, plus sheet-level plan_url /
-  // documents_url / survey_class / id), NOT the same shape /api/map/lots
-  // returns -- so the mapping below is done by hand rather than reused.
-  // That route doesn't join municipality/barangay/province/surveyor names
-  // for individual lots (only for the sheet's control point), so those
-  // fields are left null here; if a bell-selected lot needs them filled
-  // in, that join would need to be added there.
   async function handleActivityLogSelect(log: ActivityLogRow) {
     // Captured into a local const (rather than using `log.entity_id`
     // directly further down) so TypeScript can carry the null-check's
@@ -990,44 +983,16 @@ function MapViewerPageInner() {
 
     setSearchError(false);
     try {
-      const r = await fetch(`/api/lot-sheets/${entityId}`);
+      // Same endpoint the generic activeSelections fetch effect below would
+      // use to refetch this key later (its query is { sheet_id: entityId },
+      // see setActiveSelections just below) -- and unlike
+      // /api/lot-sheets/[id], this route already joins in
+      // province/municipality/barangay/surveyor/encodedBy/dateSurveyed, so
+      // those fields actually come through instead of being left null.
+      const r = await fetch(`/api/map/lots?sheet_id=${entityId}`);
       if (!r.ok) throw new Error(`Request failed (${r.status})`);
-      const sheet = await r.json();
-      const rawLots: any[] = Array.isArray(sheet.lots) ? sheet.lots : [];
-
-      // Map the raw `SELECT l.*` rows this route returns into the same
-      // camelCase LotFeature shape the rest of the app expects. Fields
-      // this route doesn't join (province/municipality/barangay/surveyor
-      // names, dateSurveyed, sheetNo, remarks, encodedBy) are left null
-      // rather than guessed at.
-      const features: LotFeature[] = rawLots
-        .filter((l) => l.geojson)
-        .map((l) => ({
-          id: l.id,
-          type: "Feature",
-          geometry: l.geojson.geometry,
-          properties: {
-            lotNo: l.lot_no,
-            owner: [l.owner_surname, l.owner_given_name].filter(Boolean).join(", "),
-            ownerGivenName: l.owner_given_name,
-            ownerSurname: l.owner_surname,
-            province: null,
-            municipality: null,
-            barangay: null,
-            surveyNo: l.survey_no,
-            dateSurveyed: null,
-            surveyor: null,
-            areaSqm: l.area_sqm,
-            sheetId: sheet.id,
-            sheetNo: sheet.sheet_no ?? null,
-            patentNo: l.patent_no,
-            remarks: l.remarks ?? null,
-            planUrl: sheet.plan_url,
-            documentsUrl: sheet.documents_url,
-            surveyClass: sheet.survey_class,
-            encodedBy: null,
-          },
-        })) as LotFeature[];
+      const fc: { features: LotFeature[] } = await r.json();
+      const features = fc.features;
 
       if (features.length === 0) throw new Error("No mapped lots on this sheet");
 

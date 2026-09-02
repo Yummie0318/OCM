@@ -81,7 +81,7 @@
 // websocket. Stops polling while the panel is open (refetches once on
 // close instead) so the list doesn't reshuffle under the user mid-read.
 //
-// FIXED-HEIGHT LIST FIX (this pass): the list used to be capped only by
+// FIXED-HEIGHT LIST FIX (earlier pass): the list used to be capped only by
 // the panel's own `max-h-[70vh]`, so on a tall screen it just kept
 // growing -- 6, 8, 10+ rows would all fit before scrolling ever kicked
 // in, which is what made the panel feel "too long" (see bug report
@@ -92,6 +92,41 @@
 // many entries, regardless of viewport height. Kept as a `min()` against
 // a vh-based ceiling too, so on a short/landscape phone screen the list
 // still shrinks further rather than pushing the header/footer off-screen.
+//
+// TIMEZONE FIX -- REVERTED (this pass): an earlier pass forced
+// `timeZone: "UTC"` on formatTime(), reasoning (incorrectly) that this
+// field needed the same fix as AttributeTable.formatDate(). It doesn't,
+// and that change was a regression -- reverted back to no forced zone.
+//
+// Why they're different: created_at (a `timestamp without time zone`
+// column) arrives over the wire as a non-ISO string straight from
+// Postgres's text format -- space-separated, no "T", no "Z", no offset
+// (e.g. "2026-09-02 06:49:26.663471"). That's not valid ISO 8601, so
+// `new Date(...)` on a browser falls back to parsing it as LOCAL time (a
+// long-standing JS engine quirk for non-standard date strings). Since the
+// DB value was itself written as local wall-clock time, "parsed as
+// local" already recovers the correct real-world instant. Formatting
+// that instant with NO forced zone (i.e. using the browser's own local
+// zone, the same zone it was parsed in) just converts it straight back
+// to the original correct wall-clock time -- the two steps cancel out.
+// Forcing `timeZone: "UTC"` on the display step broke that cancellation:
+// it took the correctly-computed instant and printed it as if it were
+// UTC, shifting every timestamp by the local UTC offset (this is what
+// turned a 6:49 AM entry into a displayed 10:49 PM).
+//
+// date_surveyed is NOT the same situation -- it's a plain DATE with no
+// time-of-day component, where forcing UTC in AttributeTable.formatDate()
+// is correct and necessary (it prevents the calendar day from rolling
+// backward when a browser west of UTC computes local midnight). That fix
+// should stay as-is; it just doesn't generalize to this field.
+//
+// Caveat: this file's current correctness depends on the DB's naive
+// timestamp and the parsing browser agreeing implicitly on what "local"
+// means, which only holds because both ultimately reduce to "no
+// conversion happens anywhere." If this ever needs to be bulletproof
+// across differing server/client zones, the real fix is migrating
+// created_at to `timestamptz` in Postgres so it's serialized with an
+// unambiguous "Z"/offset, removing the ambiguity entirely.
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -135,6 +170,9 @@ function startOfTodayISO(): string {
   return d.toISOString();
 }
 
+// No forced timeZone here -- see the TIMEZONE FIX -- REVERTED note at the
+// top of this file for why that's correct for this field specifically
+// (unlike AttributeTable.formatDate(), which forces UTC on purpose).
 function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 }
