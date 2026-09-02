@@ -166,6 +166,15 @@ onCreateShapefile: () => void;
    * year layer or search pick).
    */
   onActivityLogSelect?: (log: ActivityLogRow) => void;
+  /**
+   * Bump this (e.g. Date.now()) after any action that writes a new
+   * activity log row, so the notification bell's badge count updates
+   * right away in both the collapsed rail and the expanded footer,
+   * instead of lagging behind by up to 60s. Passed straight through to
+   * both NotificationBell instances below. Same pattern as
+   * municipalitiesRefreshKey.
+   */
+  notificationsRefreshKey?: number;
 }
 
 // Hairline helpers — draw borders at reduced opacity against the theme's
@@ -342,6 +351,7 @@ export default function Sidebar({
   activeTableKey = null,
   municipalitiesRefreshKey,
   onActivityLogSelect,
+  notificationsRefreshKey,
 }: SidebarProps) {
   const [municipalities, setMunicipalities] = useState<TreeNodeData[] | null>(null);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
@@ -479,7 +489,7 @@ export default function Sidebar({
                 <div className="truncate text-[10.5px] text-[var(--sb-text-faint)]">{userEmail}</div>
               </div>
             </button>
-            <NotificationBell onSelectLog={onActivityLogSelect} />
+            <NotificationBell onSelectLog={onActivityLogSelect} refreshKey={notificationsRefreshKey} />
           </div>
         )}
       </div>
@@ -563,7 +573,7 @@ export default function Sidebar({
         {/* Notification bell — sits just above the account footer, next
             to where the user's profile lives. */}
         <div className="mt-1.5">
-          <NotificationBell compact onSelectLog={onActivityLogSelect} />
+          <NotificationBell compact onSelectLog={onActivityLogSelect} refreshKey={notificationsRefreshKey} />
         </div>
 
         <AccountFooter compact />

@@ -206,11 +206,18 @@ interface Props {
    * after the click either way.
    */
   onSelectLog?: (log: ActivityLogRow) => void;
+  /**
+   * Bump this (e.g. Date.now()) whenever the app writes a new activity
+   * log row -- lot sheet save, shapefile create, field edit, etc. -- so
+   * the badge count updates immediately instead of waiting for the next
+   * 60s poll or for the user to open the panel themselves.
+   */
+  refreshKey?: number;
 }
 
 type Coords = { mode: "sheet" } | { mode: "anchored"; top: number; left: number; width: number };
 
-export default function NotificationBell({ compact = false, onSelectLog }: Props) {
+export default function NotificationBell({ compact = false, onSelectLog, refreshKey }: Props) {
   const { theme } = useSidebarTheme();
 
   const [logs, setLogs] = useState<ActivityLogRow[] | null>(null);
@@ -230,16 +237,40 @@ export default function NotificationBell({ compact = false, onSelectLog }: Props
     fetchTodayLogs().then(setLogs);
   }
 
+  // `open` used to be read directly inside the interval closure below,
+  // but that closure is only ever created once (empty deps array) so it
+  // permanently saw the initial `false` -- meaning "pause polling while
+  // the panel is open" never actually worked. Tracked via a ref instead
+  // so the interval always reads the live value.
+  const openRef = useRef(open);
+  useEffect(() => {
+    openRef.current = open;
+  }, [open]);
+
   useEffect(() => {
     refresh();
     pollRef.current = setInterval(() => {
-      if (!open) refresh();
+      if (!openRef.current) refresh();
     }, 60_000);
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Refetch immediately whenever the parent signals a new activity log
+  // row was written (see refreshKey prop above), instead of waiting up
+  // to 60s for the next poll or for the user to open the panel. Skips
+  // the very first render -- the mount effect above already fetches once
+  // -- so this only fires on genuine bumps.
+  const didMountRef = useRef(false);
+  useEffect(() => {
+    if (!didMountRef.current) {
+      didMountRef.current = true;
+      return;
+    }
+    refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshKey]);
 
   // Computes where the panel should sit. Two modes:
   //  - "sheet": narrow viewport -> full-width bottom sheet, no anchoring math.

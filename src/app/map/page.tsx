@@ -374,6 +374,12 @@ function MapViewerPageInner() {
 
   const [createModalOpen, setCreateModalOpen] = useState(false);
 
+  // Bumped after any action that writes a new activity_logs row, so the
+  // notification bell's badge count updates immediately instead of
+  // waiting for its own 60s poll. Passed down to both <Sidebar />
+  // instances as notificationsRefreshKey.
+  const [notificationsRefreshKey, setNotificationsRefreshKey] = useState(0);
+
   // Fetch the logged-in user once on mount. Failures are swallowed on
   // purpose -- if this fails, Sidebar just falls back to its own default
   // props ("Admin User" / "admin@example.com") rather than the page
@@ -786,6 +792,8 @@ function MapViewerPageInner() {
       throw new Error(data.error || "Failed to save plan link.");
     }
 
+    setNotificationsRefreshKey(Date.now());
+
     setLayerData((d) => {
       const next: typeof d = {};
       for (const [key, feats] of Object.entries(d)) {
@@ -817,6 +825,8 @@ function MapViewerPageInner() {
       const data = await res.json().catch(() => ({}));
       throw new Error(data.error || "Failed to save survey number.");
     }
+
+    setNotificationsRefreshKey(Date.now());
 
     setLayerData((d) => {
       const next: typeof d = {};
@@ -857,6 +867,8 @@ function MapViewerPageInner() {
       throw new Error(data.error || "Failed to save documents link.");
     }
 
+    setNotificationsRefreshKey(Date.now());
+
     setLayerData((d) => {
       const next: typeof d = {};
       for (const [key, feats] of Object.entries(d)) {
@@ -889,6 +901,8 @@ function MapViewerPageInner() {
       const data = await res.json().catch(() => ({}));
       throw new Error(data.error || "Failed to save survey class.");
     }
+
+    setNotificationsRefreshKey(Date.now());
 
     setLayerData((d) => {
       const next: typeof d = {};
@@ -1212,6 +1226,7 @@ function MapViewerPageInner() {
               onViewLayer={handleViewLayer}
               activeTableKey={tableFilterKey}
               onActivityLogSelect={handleActivityLogSelect}
+              notificationsRefreshKey={notificationsRefreshKey}
             />
           </div>
         </aside>
@@ -1257,6 +1272,7 @@ function MapViewerPageInner() {
                 onViewLayer={handleViewLayer}
                 activeTableKey={tableFilterKey}
                 onActivityLogSelect={handleActivityLogSelect}
+                notificationsRefreshKey={notificationsRefreshKey}
               />
             </div>
 
