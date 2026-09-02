@@ -80,6 +80,18 @@
 // Polls every 60s so the badge count stays roughly live without needing a
 // websocket. Stops polling while the panel is open (refetches once on
 // close instead) so the list doesn't reshuffle under the user mid-read.
+//
+// FIXED-HEIGHT LIST FIX (this pass): the list used to be capped only by
+// the panel's own `max-h-[70vh]`, so on a tall screen it just kept
+// growing -- 6, 8, 10+ rows would all fit before scrolling ever kicked
+// in, which is what made the panel feel "too long" (see bug report
+// screenshot: six rows rendered with no scrollbar, panel visually
+// spilling past the rest of the sidebar). Fixed by giving the list itself
+// a fixed max-height sized to roughly LIST_VISIBLE_ROWS rows (via
+// LIST_MAX_HEIGHT_PX) so it always scrolls once there are more than that
+// many entries, regardless of viewport height. Kept as a `min()` against
+// a vh-based ceiling too, so on a short/landscape phone screen the list
+// still shrinks further rather than pushing the header/footer off-screen.
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -106,6 +118,16 @@ const VIEWPORT_MARGIN = 10;
 // render as a bottom sheet -- there usually isn't enough room next to a
 // sidebar-docked bell on a phone for a floating dropdown to feel right.
 const MOBILE_BREAKPOINT = 640;
+// How many rows should be visible before the list starts scrolling.
+// Purely descriptive -- the actual cap is LIST_MAX_HEIGHT_PX. Row height
+// isn't fixed: a short description renders on one line (~49px row), a
+// long lot-sheet name wraps to two (~66px row), and real data is a mix
+// of both (see bug report screenshot, where several rows wrapped). Sized
+// for a ~76px average row so 5 rows fit even when most of them wrap,
+// rather than only fitting 5 in the best case and clipping to 4 in the
+// common case.
+const LIST_VISIBLE_ROWS = 5;
+const LIST_MAX_HEIGHT_PX = 410;
 
 function startOfTodayISO(): string {
   const d = new Date();
@@ -369,7 +391,10 @@ export default function NotificationBell({ compact = false, onSelectLog }: Props
                 </button>
               </div>
 
-              <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
+              <div
+                className="min-h-0 overflow-y-auto px-2 py-2"
+                style={{ maxHeight: `min(${LIST_MAX_HEIGHT_PX}px, 50vh)` }}
+              >
                 {logs === null && (
                   <div className="px-2 py-6 text-center text-[12.5px]" style={{ color: theme.textFaint }}>
                     Loading…
