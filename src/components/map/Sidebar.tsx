@@ -2,17 +2,28 @@
 
 // Target path: src/components/map/Sidebar.tsx
 //
-// NOTIFICATION BELL (this pass): added <NotificationBell /> next to the
+// NOTIFICATION ANCHOR (this pass): added `data-notification-anchor="true"`
+// to both root <div>s (collapsed rail and expanded view). NotificationBell
+// reads the closest ancestor with this attribute via
+// `el.closest("[data-notification-anchor]")` to clamp its dropdown's
+// position against the SIDEBAR's bounds instead of the whole browser
+// window -- see NotificationBell.tsx's computeCoords for why that matters
+// (the sidebar is narrow but sits inside a much wider window, so clamping
+// against window.innerWidth let the panel drift away from the bell and
+// spill into the map area). No other changes in this pass.
+//
+// NOTIFICATION BELL (earlier pass): added <NotificationBell /> next to the
 // account footer in both layout states:
-//   - Expanded: sits inline with the username/role button, wrapped in a
-//     div with stopPropagation() so clicking the bell doesn't also toggle
-//     the account dropdown open underneath the modal.
+//   - Expanded: sits inline with the username/role button, as a sibling
+//     button (see the AccountFooter note below on why it's a sibling and
+//     not a nested button).
 //   - Collapsed: rendered as a standalone icon-only (`compact`) button just
 //     above <AccountFooter compact />, matching the rail's existing icon
 //     stack (Create Shapefile, Search, municipality icons, active-count
 //     pill).
 // The component is fully self-contained (owns its own fetch/poll/modal
-// state), so no new props were added to SidebarProps for this.
+// state), so no new props were added to SidebarProps for this beyond
+// `onActivityLogSelect`, passed straight through to NotificationBell.
 //
 // SEARCH RESULTS IN "SELECTED" TAB (earlier pass): SelectedPanel's rows were
 // always rendered with a CalendarDays icon, which made sense when every
@@ -112,12 +123,13 @@ import {
   Search as SearchIcon,
   Table2,
   Check,
+  Bell,
 } from "lucide-react";
 import type { SelectionMeta, TreeNodeData, LotSearchResult } from "@/lib/geo";
 import { uiFont, type SidebarTheme } from "./sidebarTheme";
 import { useSidebarTheme } from "./SidebarThemeContext";
 import SearchBar from "./SearchBar";
-import NotificationBell from "@/components/NotificationBell";
+import NotificationBell, { type ActivityLogRow } from "@/components/NotificationBell";
 
 interface SidebarProps {
   activeSelections: Record<string, SelectionMeta>;
@@ -146,6 +158,14 @@ onCreateShapefile: () => void;
    * ever loads once on mount, same as before.
    */
   municipalitiesRefreshKey?: number;
+  /**
+   * Called when the user clicks an entry in the notification bell's
+   * "today's activity" modal. Passed straight through to NotificationBell
+   * -- see map/page.tsx's handleActivityLogSelect for what it actually
+   * does (adds the sheet as a map/table selection, same mechanism as a
+   * year layer or search pick).
+   */
+  onActivityLogSelect?: (log: ActivityLogRow) => void;
 }
 
 // Hairline helpers — draw borders at reduced opacity against the theme's
@@ -321,6 +341,7 @@ export default function Sidebar({
   onViewLayer,
   activeTableKey = null,
   municipalitiesRefreshKey,
+  onActivityLogSelect,
 }: SidebarProps) {
   const [municipalities, setMunicipalities] = useState<TreeNodeData[] | null>(null);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
@@ -458,7 +479,7 @@ export default function Sidebar({
                 <div className="truncate text-[10.5px] text-[var(--sb-text-faint)]">{userEmail}</div>
               </div>
             </button>
-            <NotificationBell />
+            <NotificationBell onSelectLog={onActivityLogSelect} />
           </div>
         )}
       </div>
@@ -469,6 +490,7 @@ export default function Sidebar({
   if (collapsed) {
     return (
       <div
+        data-notification-anchor="true"
         className={`${uiFont.className} flex h-full w-full flex-col items-center bg-[var(--sb-bg)] py-3`}
         style={vars}
       >
@@ -538,11 +560,10 @@ export default function Sidebar({
           </Tooltip>
         )}
 
-        {/* Notification bell — icon-only variant for the collapsed rail,
-            placed just above the account footer, same spot the active-count
-            pill occupies above it. */}
+        {/* Notification bell — sits just above the account footer, next
+            to where the user's profile lives. */}
         <div className="mt-1.5">
-          <NotificationBell compact />
+          <NotificationBell compact onSelectLog={onActivityLogSelect} />
         </div>
 
         <AccountFooter compact />
@@ -554,6 +575,7 @@ export default function Sidebar({
   // ---------------- EXPANDED ----------------
   return (
     <div
+      data-notification-anchor="true"
       className={`${uiFont.className} flex h-full w-full min-w-0 flex-col bg-[var(--sb-bg)] px-3 py-3 text-[var(--sb-text)] antialiased`}
       style={vars}
     >
@@ -757,10 +779,13 @@ function SelectedPanel({
         {activeEntries.map(([key, sel]) => {
           const isShowing = activeTableKey === key;
           // A search-result pick (see handleSearchSelect in map/page.tsx)
-          // is keyed `search:<id>`, distinct from a year layer's
-          // `year:<barangayId>:<yearId>` key — swap the leading icon so
-          // the two kinds of rows read differently at a glance.
+          // is keyed `search:<id>`, and a notification-bell pick (see
+          // handleActivityLogSelect in map/page.tsx) is keyed
+          // `sheet:<id>` -- both distinct from a year layer's
+          // `year:<barangayId>:<yearId>` key. Swap the leading icon so
+          // all three kinds of rows read differently at a glance.
           const isSearchResult = key.startsWith("search:");
+          const isSheetFromLog = key.startsWith("sheet:");
           return (
             <div
               key={key}
@@ -773,6 +798,8 @@ function SelectedPanel({
             >
               {isSearchResult ? (
                 <SearchIcon size={13} className="mt-0.5 flex-shrink-0 text-[var(--sb-accent)]" />
+              ) : isSheetFromLog ? (
+                <Bell size={13} className="mt-0.5 flex-shrink-0 text-[var(--sb-accent)]" />
               ) : (
                 <CalendarDays size={13} className="mt-0.5 flex-shrink-0 text-[var(--sb-accent)]" />
               )}

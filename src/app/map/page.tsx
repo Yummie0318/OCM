@@ -2,7 +2,34 @@
 
 // Target path: src/app/map/page.tsx
 //
-// SEARCH RESULT AS A REAL SELECTION (this pass): handleSearchSelect used
+// NOTIFICATION BELL CLICK-THROUGH (this pass): added handleActivityLogSelect,
+// wired to both <Sidebar /> instances via the new onActivityLogSelect prop
+// (Sidebar passes it straight through to NotificationBell -- see its
+// onSelectLog). This was the missing piece from the notification bell work:
+// NotificationBell's onSelectLog wiring in Sidebar was already correct, but
+// nothing was listening on this end, so clicking a "today's activity" row
+// did nothing.
+//
+// Mirrors handleSearchSelect below almost exactly: fetches the full sheet
+// (GET /api/lot-sheets/[id], which returns snake_case columns straight off
+// the table -- NOT the same shape /api/map/lots returns), maps its lots into
+// LotFeature[], registers them under a content-addressed `sheet:<id>` key in
+// BOTH layerData and activeSelections (Sidebar.tsx's SelectedPanel already
+// special-cases `sheet:<id>` keys with a bell icon -- see its
+// isSheetFromLog check), then focuses the map + opens the detail panel on
+// the first lot, same as a search pick. Re-clicking an already-loaded entry
+// just re-focuses instead of re-fetching, same no-op-re-add behavior as
+// re-picking a search result.
+//
+// One thing worth double-checking against your actual schema: GET
+// /api/lot-sheets/[id] returns raw `SELECT l.*` rows for `sheet.lots`, which
+// don't include municipality/barangay names (that route doesn't join for
+// individual lots, only for the sheet's own control point). Those fields
+// are filled with null below rather than guessed at -- if your LotFeature
+// consumers need them populated for a bell-selected lot, that join would
+// need to be added to the lot-sheets route.
+//
+// SEARCH RESULT AS A REAL SELECTION (earlier pass): handleSearchSelect used
 // to shove the picked lot straight into `layerData.search` without ever
 // touching `activeSelections`. That meant a searched lot showed on the
 // map and opened the detail panel, but had no presence in Sidebar's
@@ -171,6 +198,7 @@ import LotDetailPanel from "@/components/map/LotDetailPanel";
 import { SidebarThemeProvider, useSidebarTheme } from "@/components/map/SidebarThemeContext";
 import { uiFont } from "@/components/map/sidebarTheme";
 import type { LotFeature, SelectionMeta, LotSearchResult } from "@/lib/geo";
+import type { ActivityLogRow } from "@/components/NotificationBell";
 import CreateShapefileModal from "@/components/CreateShapefileModal";
 
 const SIDEBAR_MIN_WIDTH = 220;
@@ -741,9 +769,9 @@ function MapViewerPageInner() {
   // planUrl onto every currently-loaded feature belonging to that sheetId
   // across all layers, so the table (and anything else reading
   // layerData/allFeatures) reflects the new link immediately without a
-  // refetch. Throws on failure (with the server's message when available)
-  // so the inline control can surface the error next to its input instead
-  // of failing silently.
+  // refetch. Throws (with the server's error message when available)
+  // on failure so AttributeTable's inline control can show it next to the
+  // input instead of failing silently.
   async function handleUpdatePlanUrl(sheetId: number, planUrl: string) {
     const res = await fetch(`/api/lot-sheets/${sheetId}`, {
       method: "PATCH",
@@ -806,7 +834,7 @@ function MapViewerPageInner() {
     });
   }
 
-  // NEW — Called by AttributeTable's inline "Add link" control (sheets
+  // Called by AttributeTable's inline "Add link" control (sheets
   // list, Documents column, or the drilled-in breadcrumb) when the user
   // saves a documents URL for a sheet that had none yet. Same shape as
   // handleUpdatePlanUrl — a single PATCH to /api/lot-sheets/[id], then an
@@ -840,8 +868,8 @@ function MapViewerPageInner() {
     });
   }
 
-  // NEW — Called by AttributeTable's inline "Set class" control (sheets
-  // list Class column, or the drilled-in breadcrumb) when the user picks
+  // Called by AttributeTable's inline "Set class" control (sheets list
+  // Class column, or the drilled-in breadcrumb) when the user picks
   // "admin" or "private" for a sheet that has no survey_class yet.
   // survey_class lives directly on lot_sheets and — unlike survey_no —
   // never cascades down to individual lots, so this is just a straight
@@ -915,6 +943,113 @@ function MapViewerPageInner() {
     }
   }
 
+  // Fired when the user clicks a "today's activity" entry in the
+  // notification bell (see NotificationBell's onSelectLog -> Sidebar's
+  // onActivityLogSelect prop). Every logged entry is currently a
+  // "lot_sheet" (see logActivity() in /api/lot-sheets POST), so entity_id
+  // is a lot_sheets.id. Same overall shape as handleSearchSelect: fetch
+  // the full data, register it under a content-addressed key in BOTH
+  // layerData and activeSelections so it renders on the map and shows up
+  // in the Selected tab (Sidebar.tsx already special-cases `sheet:<id>`
+  // keys with a bell icon there), then focus the map + open the detail
+  // panel on the first lot -- the same "project it on the map" effect a
+  // search pick gets.
+  //
+  // GET /api/lot-sheets/[id] returns raw snake_case columns straight off
+  // the DB (sheet.lots is `SELECT l.*`, plus sheet-level plan_url /
+  // documents_url / survey_class / id), NOT the same shape /api/map/lots
+  // returns -- so the mapping below is done by hand rather than reused.
+  // That route doesn't join municipality/barangay/province/surveyor names
+  // for individual lots (only for the sheet's control point), so those
+  // fields are left null here; if a bell-selected lot needs them filled
+  // in, that join would need to be added there.
+  async function handleActivityLogSelect(log: ActivityLogRow) {
+    // Captured into a local const (rather than using `log.entity_id`
+    // directly further down) so TypeScript can carry the null-check's
+    // narrowing into the closures passed to setLayerData/setActiveSelections
+    // below -- narrowing on a property access doesn't survive across a
+    // function boundary, since the object could in principle be mutated
+    // between the check and the closure running. `entityId` here is a
+    // plain local, so TS knows it's `number` for the rest of this function.
+    const entityId = log.entity_id;
+    if (entityId == null) return;
+    const key = `sheet:${entityId}`;
+
+    // Re-clicking an already-loaded entry just re-focuses it instead of
+    // re-fetching -- same no-op-re-add behavior as re-picking a search result.
+    if (activeSelections[key] && layerData[key]?.length) {
+      const first = layerData[key][0];
+      setSelectedId(first.id);
+      setSelectedFeature(first);
+      setSheetPreview(null);
+      setDetailPanelOpen(true);
+      setFocusFeature({ feature: first, token: Date.now() });
+      if (isMobile) setMobileOpen(false);
+      return;
+    }
+
+    setSearchError(false);
+    try {
+      const r = await fetch(`/api/lot-sheets/${entityId}`);
+      if (!r.ok) throw new Error(`Request failed (${r.status})`);
+      const sheet = await r.json();
+      const rawLots: any[] = Array.isArray(sheet.lots) ? sheet.lots : [];
+
+      // Map the raw `SELECT l.*` rows this route returns into the same
+      // camelCase LotFeature shape the rest of the app expects. Fields
+      // this route doesn't join (province/municipality/barangay/surveyor
+      // names, dateSurveyed, sheetNo, remarks, encodedBy) are left null
+      // rather than guessed at.
+      const features: LotFeature[] = rawLots
+        .filter((l) => l.geojson)
+        .map((l) => ({
+          id: l.id,
+          type: "Feature",
+          geometry: l.geojson.geometry,
+          properties: {
+            lotNo: l.lot_no,
+            owner: [l.owner_surname, l.owner_given_name].filter(Boolean).join(", "),
+            ownerGivenName: l.owner_given_name,
+            ownerSurname: l.owner_surname,
+            province: null,
+            municipality: null,
+            barangay: null,
+            surveyNo: l.survey_no,
+            dateSurveyed: null,
+            surveyor: null,
+            areaSqm: l.area_sqm,
+            sheetId: sheet.id,
+            sheetNo: sheet.sheet_no ?? null,
+            patentNo: l.patent_no,
+            remarks: l.remarks ?? null,
+            planUrl: sheet.plan_url,
+            documentsUrl: sheet.documents_url,
+            surveyClass: sheet.survey_class,
+            encodedBy: null,
+          },
+        })) as LotFeature[];
+
+      if (features.length === 0) throw new Error("No mapped lots on this sheet");
+
+      setLayerData((d) => ({ ...d, [key]: features }));
+      setActiveSelections((prev) => ({
+        ...prev,
+        [key]: { query: { sheet_id: entityId }, label: log.description },
+      }));
+
+      const first = features[0];
+      setSelectedId(first.id);
+      setSelectedFeature(first);
+      setSheetPreview(null);
+      setDetailPanelOpen(true);
+      setFocusFeature({ feature: first, token: Date.now() });
+      setTableVisible(true);
+      if (isMobile) setMobileOpen(false);
+    } catch {
+      setSearchError(true);
+    }
+  }
+
   // Clears the session cookie server-side, then sends the user back to the
   // login page. Awaiting the fetch first (rather than firing-and-forgetting)
   // means the cookie is actually gone before middleware.ts re-checks auth
@@ -971,10 +1106,11 @@ function MapViewerPageInner() {
     });
 
     // Drop any layerData entry whose key no longer has a matching
-    // activeSelections entry. Search results now live in activeSelections
-    // (under `search:<id>` keys — see handleSearchSelect above) just like
-    // year layers do, so they're cleaned up here the same way; no special
-    // case needed for a bare "search" key anymore.
+    // activeSelections entry. Search results and notification-bell picks
+    // now live in activeSelections (under `search:<id>` / `sheet:<id>`
+    // keys — see handleSearchSelect and handleActivityLogSelect above)
+    // just like year layers do, so they're cleaned up here the same way;
+    // no special case needed for either.
     setLayerData((d) => {
       let changed = false;
       const next: typeof d = {};
@@ -1110,6 +1246,7 @@ function MapViewerPageInner() {
               onCreateShapefile={() => setCreateModalOpen(true)}
               onViewLayer={handleViewLayer}
               activeTableKey={tableFilterKey}
+              onActivityLogSelect={handleActivityLogSelect}
             />
           </div>
         </aside>
@@ -1154,6 +1291,7 @@ function MapViewerPageInner() {
                 onCreateShapefile={() => setCreateModalOpen(true)}
                 onViewLayer={handleViewLayer}
                 activeTableKey={tableFilterKey}
+                onActivityLogSelect={handleActivityLogSelect}
               />
             </div>
 
@@ -1256,7 +1394,7 @@ function MapViewerPageInner() {
           )}
           {!isLoading && hasError && (
             <div className="absolute right-3 top-3 max-w-[260px] rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-[13px] text-red-800 shadow-md">
-              {searchError ? "Couldn't load that search result. Try again." : "Some lots failed to load. Try toggling that selection again."}
+              {searchError ? "Couldn't load that selection. Try again." : "Some lots failed to load. Try toggling that selection again."}
             </div>
           )}
           {/* width/isResizing/onStartResize wire the panel into the
