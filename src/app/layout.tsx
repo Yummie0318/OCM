@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Lot Data -> Shapefile / KML / GeoJSON",
-  description: "Convert LMB Lot Data Computation Sheets into downloadable GIS files.",
+  title: "One Control Map",
+  description: "Penro Cagayan A&D",
 };
 
 export default function RootLayout({

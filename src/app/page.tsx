@@ -147,7 +147,17 @@ function LoginPage() {
         </form>
 
         <p className="mt-6 text-center text-[11.5px] text-[var(--sb-text-faint)]">
-          Need access? Please contact the administrator.
+          Need access? Please contact{" "}
+          <a
+            href="https://www.facebook.com/arnold.mendoza.5283166"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium underline-offset-2 hover:underline"
+            style={{ color: ACCENT }}
+          >
+            Arnold Mendoza
+          </a>
+          , the administrator.
         </p>
       </div>
 
