@@ -2,7 +2,18 @@
 
 // Target path: src/components/map/Sidebar.tsx
 //
-// NOTIFICATION ANCHOR (this pass): added `data-notification-anchor="true"`
+// PROJECTION MODAL (this pass): added a "Project" button to the top of the
+// Layers tab's tree (next to the "Municipalities" heading), which opens
+// <ProjectionModal /> — a checkbox tree that lets the user pick several
+// municipalities / barangays / years at once instead of drilling through
+// the tree branch-by-branch. See ProjectionModal.tsx's own file-top
+// comment for exactly which key/query shape each kind of pick produces.
+// Applying the modal just calls the existing `onToggle` prop once per
+// pick (handleApplyProjection below) — this component and map/page.tsx
+// don't need to know anything special happened; it's the same code path
+// as checking a year checkbox or picking a search result.
+//
+// NOTIFICATION ANCHOR (earlier pass): added `data-notification-anchor="true"`
 // to both root <div>s (collapsed rail and expanded view). NotificationBell
 // reads the closest ancestor with this attribute via
 // `el.closest("[data-notification-anchor]")` to clamp its dropdown's
@@ -124,12 +135,14 @@ import {
   Table2,
   Check,
   Bell,
+  Filter,
 } from "lucide-react";
 import type { SelectionMeta, TreeNodeData, LotSearchResult } from "@/lib/geo";
 import { uiFont, type SidebarTheme } from "./sidebarTheme";
 import { useSidebarTheme } from "./SidebarThemeContext";
 import SearchBar from "./SearchBar";
 import NotificationBell, { type ActivityLogRow } from "@/components/NotificationBell";
+import ProjectionModal, { type ProjectionResult } from "./ProjectionModal";
 
 interface SidebarProps {
   activeSelections: Record<string, SelectionMeta>;
@@ -357,6 +370,9 @@ export default function Sidebar({
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [pendingExpandId, setPendingExpandId] = useState<string | number | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>("layers");
+  // Controls the "Project layers" modal (bulk multi-municipality/
+  // barangay/year picker) — see ProjectionModal.tsx.
+  const [projectionModalOpen, setProjectionModalOpen] = useState(false);
 
   const accountRef = useRef<HTMLDivElement>(null);
   const { darkMode, toggleDarkMode, theme, vars } = useSidebarTheme();
@@ -388,6 +404,19 @@ export default function Sidebar({
     setPendingExpandId(id);
     setActiveTab("layers");
     onToggleCollapsed();
+  }
+
+  // Applies every selection the user picked in the "Project layers" modal
+  // by feeding each one through the same onToggle prop everything else in
+  // this component already uses (year checkboxes, search picks, etc) —
+  // see ProjectionModal.tsx's file-top comment for what key/query shape
+  // each kind of pick produces. Closes the modal and jumps to the
+  // "Selected" tab afterward so the user immediately sees what just got
+  // added.
+  function handleApplyProjection(results: ProjectionResult[]) {
+    results.forEach(({ key, meta }) => onToggle(key, meta));
+    setProjectionModalOpen(false);
+    setActiveTab("selected");
   }
 
   const brand = (
@@ -527,6 +556,24 @@ export default function Sidebar({
           </button>
         </Tooltip>
 
+        {/* Same trick as Search/Expand above: the rail has no room for the
+            full projection tree, so this just pins the sidebar open and
+            jumps to the Layers tab, where the real "Project" button (see
+            LayersPanel below) lives. */}
+        <Tooltip label="Project layers" side="right">
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab("layers");
+              onToggleCollapsed();
+              setProjectionModalOpen(true);
+            }}
+            className={`mt-1.5 ${iconBtnClass("lg")}`}
+          >
+            <Filter size={16} />
+          </button>
+        </Tooltip>
+
         <div className="my-2.5 w-7" style={{ borderTop: `1px solid ${hairline}` }} />
 
         <div className="flex min-h-0 w-full flex-1 flex-col items-center gap-1.5 overflow-y-auto overflow-x-hidden">
@@ -578,6 +625,21 @@ export default function Sidebar({
 
         <AccountFooter compact />
         <style>{`@keyframes sidebar-pulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }`}</style>
+
+        {/* Modal itself is rendered here too (portaled to <body>, so its
+            actual DOM position doesn't matter) so the rail's "Project
+            layers" shortcut above has somewhere to open it into — the
+            expand-then-open sequence above flips `collapsed` on the very
+            next render, so by the time this state update lands this
+            branch may no longer even be the one rendering, but keeping
+            the modal in both branches means it opens correctly regardless
+            of which one is active when the click fires. */}
+        <ProjectionModal
+          open={projectionModalOpen}
+          onClose={() => setProjectionModalOpen(false)}
+          // municipalities={municipalities}
+          onApply={handleApplyProjection}
+        />
       </div>
     );
   }
@@ -657,6 +719,7 @@ export default function Sidebar({
             pendingExpandId={pendingExpandId}
             onAutoExpandHandled={() => setPendingExpandId(null)}
             refreshKey={municipalitiesRefreshKey}
+            onOpenProjection={() => setProjectionModalOpen(true)}
           />
         ) : (
           <SelectedPanel
@@ -672,6 +735,13 @@ export default function Sidebar({
 
       <AccountFooter compact={false} />
       <style>{`@keyframes sidebar-pulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }`}</style>
+
+      <ProjectionModal
+        open={projectionModalOpen}
+        onClose={() => setProjectionModalOpen(false)}
+        // municipalities={municipalities}
+        onApply={handleApplyProjection}
+      />
     </div>
   );
 }
@@ -722,17 +792,23 @@ function TabButton({
 // ---------------- "Selected" tab: active selections as a flat list ----------------
 //
 // `sel.label` is a composite label — "Municipality, Barangay, Year" for a
-// year layer (built in YearRow's onCheck inside BarangayNode below), or
-// "Owner · Lot No" for a picked search result (built in handleSearchSelect
-// in map/page.tsx) — so rows wrap to two lines instead of truncating to
-// one, with the full text still available via the tooltip.
+// year layer (built in YearRow's onCheck inside BarangayNode below, or by
+// ProjectionModal for a bulk-picked year), "Owner · Lot No" for a picked
+// search result (built in handleSearchSelect in map/page.tsx), or
+// "Municipality (all barangays, all years)" / "Municipality, Barangay (all
+// years)" for a whole-municipality/whole-barangay projection (built in
+// ProjectionModal.tsx) — so rows wrap to two lines instead of truncating
+// to one, with the full text still available via the tooltip.
 //
 // Each row now carries three actions: view-in-table (Table2), and remove
 // (X). The row currently driving the attribute table (activeTableKey ===
 // key) gets an accent ring so it's obvious at a glance which layer is
 // being inspected below. The leading icon distinguishes a search result
-// (`search:<id>` key) from a year layer (`year:<barangayId>:<yearId>` key)
-// so the two kinds of entries don't look identical in the list.
+// (`search:<id>` key), a notification-bell pick (`sheet:<id>`), a
+// whole-municipality projection (`proj:muni:<id>`), a whole-barangay
+// projection (`proj:brgy:<id>`), and an ordinary year layer
+// (`year:<barangayId>:<yearId>`) so each kind of entry reads differently
+// at a glance.
 
 function SelectedPanel({
   activeEntries,
@@ -789,13 +865,17 @@ function SelectedPanel({
         {activeEntries.map(([key, sel]) => {
           const isShowing = activeTableKey === key;
           // A search-result pick (see handleSearchSelect in map/page.tsx)
-          // is keyed `search:<id>`, and a notification-bell pick (see
-          // handleActivityLogSelect in map/page.tsx) is keyed
-          // `sheet:<id>` -- both distinct from a year layer's
+          // is keyed `search:<id>`, a notification-bell pick (see
+          // handleActivityLogSelect in map/page.tsx) is keyed `sheet:<id>`,
+          // and a bulk projection pick (see ProjectionModal.tsx) is keyed
+          // `proj:muni:<id>` (whole municipality) or `proj:brgy:<id>`
+          // (whole barangay) — all distinct from a single year layer's
           // `year:<barangayId>:<yearId>` key. Swap the leading icon so
-          // all three kinds of rows read differently at a glance.
+          // every kind of row reads differently at a glance.
           const isSearchResult = key.startsWith("search:");
           const isSheetFromLog = key.startsWith("sheet:");
+          const isProjMuni = key.startsWith("proj:muni:");
+          const isProjBrgy = key.startsWith("proj:brgy:");
           return (
             <div
               key={key}
@@ -810,6 +890,10 @@ function SelectedPanel({
                 <SearchIcon size={13} className="mt-0.5 flex-shrink-0 text-[var(--sb-accent)]" />
               ) : isSheetFromLog ? (
                 <Bell size={13} className="mt-0.5 flex-shrink-0 text-[var(--sb-accent)]" />
+              ) : isProjMuni ? (
+                <Building2 size={13} className="mt-0.5 flex-shrink-0 text-[var(--sb-accent)]" />
+              ) : isProjBrgy ? (
+                <MapPin size={13} className="mt-0.5 flex-shrink-0 text-[var(--sb-accent)]" />
               ) : (
                 <CalendarDays size={13} className="mt-0.5 flex-shrink-0 text-[var(--sb-accent)]" />
               )}
@@ -839,11 +923,11 @@ function SelectedPanel({
 
               {/* Remove button — always red so it's never invisible against
                   the row's accent background, regardless of theme. Works
-                  identically for a year layer or a search result: both
-                  just call onToggle(key, null), which map/page.tsx's
-                  handleToggle uses to drop the key from activeSelections
-                  (and, via the layerData cleanup effect there, from the
-                  map/table too). */}
+                  identically for a year layer, a search result, or a
+                  projection pick: all of them just call onToggle(key,
+                  null), which map/page.tsx's handleToggle uses to drop the
+                  key from activeSelections (and, via the layerData cleanup
+                  effect there, from the map/table too). */}
               <Tooltip label="Remove layer" side="left">
                 <button
                   type="button"
@@ -871,6 +955,7 @@ function LayersPanel({
   pendingExpandId,
   onAutoExpandHandled,
   refreshKey,
+  onOpenProjection,
 }: {
   municipalities: TreeNodeData[] | null;
   activeSelections: Record<string, SelectionMeta>;
@@ -879,12 +964,27 @@ function LayersPanel({
   pendingExpandId: string | number | null;
   onAutoExpandHandled: () => void;
   refreshKey?: number;
+  /** Opens the bulk "Project layers" modal (see ProjectionModal.tsx). */
+  onOpenProjection: () => void;
 }) {
   return (
     <div>
-      <h3 className="px-0.5 text-[10px] font-bold uppercase tracking-wide text-[var(--sb-text-muted)]">
-        Municipalities
-      </h3>
+      <div className="mb-1 flex items-center justify-between px-0.5">
+        <h3 className="text-[10px] font-bold uppercase tracking-wide text-[var(--sb-text-muted)]">
+          Municipalities
+        </h3>
+        {/* Opens ProjectionModal — lets the user pick several
+            municipalities/barangays/years at once instead of drilling
+            through the tree below one branch at a time. */}
+        <button
+          type="button"
+          onClick={onOpenProjection}
+          className="flex flex-shrink-0 items-center gap-1 rounded-full border-0 bg-[var(--sb-accent-bg)] px-2 py-[3px] text-[10.5px] font-semibold text-[var(--sb-accent)] transition-opacity duration-100 hover:opacity-80"
+        >
+          <Filter size={10.5} />
+          Project
+        </button>
+      </div>
 
       <div className="mt-2 flex flex-col gap-0.5">
         {municipalities === null &&

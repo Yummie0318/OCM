@@ -1,6 +1,13 @@
-// Target path in your project: src/app/api/map/lots/route.ts
+// Target path: src/app/api/map/lots/route.ts
 //
-// DOCUMENTS URL + SURVEY CLASS FIX (this pass): the SELECT below was
+// CENRO FILTER (this pass): added `cenro_id` as a new selection mode, for
+// ProjectionModal's whole-CENRO pick (`proj:cenro:<id>`, see
+// ProjectionModal.tsx). Lots don't carry a cenro_id column themselves — a
+// lot's CENRO is derived through its municipality — so this filters via a
+// subquery against `municipalities.cenro_id` rather than a join, same
+// pattern as the existing municipality_id branch just one level up.
+//
+// DOCUMENTS URL + SURVEY CLASS FIX (earlier pass): the SELECT below was
 // missing ls.documents_url and ls.survey_class entirely, so every feature
 // returned by this endpoint always had properties.documentsUrl and
 // properties.surveyClass as undefined — regardless of what was actually
@@ -23,6 +30,7 @@
 //
 // Usage (exactly one of these selection modes):
 //   /api/map/lots?id=983                     (single lot — used by search select)
+//   /api/map/lots?cenro_id=2                  (whole CENRO, all municipalities)
 //   /api/map/lots?municipality_id=5
 //   /api/map/lots?barangay_id=12              (whole barangay, all years)
 //   /api/map/lots?barangay_id=12&year=2025    (one year within a barangay)
@@ -75,6 +83,7 @@ export async function GET(request: Request) {
   const sheetIdRaw = searchParams.get("sheet_id");
   const barangayIdRaw = searchParams.get("barangay_id");
   const municipalityIdRaw = searchParams.get("municipality_id");
+  const cenroIdRaw = searchParams.get("cenro_id");
   const surveyorIdRaw = searchParams.get("surveyor_id");
   const yearRaw = searchParams.get("year");
   const bbox = searchParams.get("bbox");
@@ -88,6 +97,7 @@ export async function GET(request: Request) {
     ["sheet_id", sheetIdRaw],
     ["barangay_id", barangayIdRaw],
     ["municipality_id", municipalityIdRaw],
+    ["cenro_id", cenroIdRaw],
     ["surveyor_id", surveyorIdRaw],
   ];
   for (const [name, raw] of idParams) {
@@ -103,6 +113,7 @@ export async function GET(request: Request) {
   const sheetId = parsePositiveInt(sheetIdRaw);
   const barangayId = parsePositiveInt(barangayIdRaw);
   const municipalityId = parsePositiveInt(municipalityIdRaw);
+  const cenroId = parsePositiveInt(cenroIdRaw);
   const surveyorId = parsePositiveInt(surveyorIdRaw);
   const year = yearRaw != null ? Number(yearRaw) : null;
 
@@ -130,13 +141,21 @@ export async function GET(request: Request) {
     // change to join through lot_sheets/control_points too — flag if that's
     // the intent.
     conditions.push(`l.municipality_id = ${addParam(municipalityId)}`);
+  } else if (cenroId != null) {
+    // Whole-CENRO projection (proj:cenro:<id> from ProjectionModal): every
+    // lot whose municipality falls under this CENRO. A subquery, not a
+    // join, since no columns off `municipalities` are being projected here
+    // — same shape as the municipality_id branch above, one level up.
+    conditions.push(
+      `l.municipality_id IN (SELECT id FROM municipalities WHERE cenro_id = ${addParam(cenroId)})`
+    );
   } else if (surveyorId != null) {
     conditions.push(`l.surveyor_id = ${addParam(surveyorId)}`);
   } else {
     return NextResponse.json(
       {
         error:
-          "Provide one of: id, sheet_id, barangay_id (optionally with year), municipality_id, or surveyor_id.",
+          "Provide one of: id, sheet_id, barangay_id (optionally with year), municipality_id, cenro_id, or surveyor_id.",
       },
       { status: 400 }
     );
