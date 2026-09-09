@@ -2,7 +2,33 @@
 
 // Target path: src/components/NotificationBell.tsx
 //
-// ANCHOR-TO-SIDEBAR FIX (this pass): the dropdown used to clamp its
+// GROW-FROM-CONTENT / ANCHOR-BY-ONE-EDGE FIX (this pass): the panel used
+// to always set BOTH `top` (or a computed flip-above `top`) using a
+// *guessed* `estimatedHeight` (capped at 420px), then let the content
+// determine actual height. That mismatch is what caused the empty-state
+// bug: with zero/one activity rows the panel's real content is maybe
+// ~120px tall, but the box was still positioned as if it were going to
+// be ~420px, leaving a visible empty gap between the panel and the bell.
+// It also meant that adding more rows later made the panel grow
+// downward (away from the trigger) rather than upward toward it, even
+// when it had opened in the "above the bell" flipped position.
+//
+// Fixed by anchoring the panel with only ONE edge pinned (`bottom` when
+// opening above the trigger, `top` when opening below it) and letting
+// the browser size the box from its actual content, with `maxHeight`
+// computed precisely from the real available space on that side (not a
+// guess). Anchoring by `bottom` only (no `top`) is what makes a short
+// panel sit flush against the bell with no gap, and makes a panel that
+// later grows (more activity rows) grow UPWARD -- its pinned bottom edge
+// never moves -- instead of guessing wrong.
+//
+// Also flipped the default preference: since the bell typically lives
+// low in the sidebar (next to the account footer, or near the bottom of
+// the collapsed rail), computeCoords() now prefers opening ABOVE the
+// trigger whenever there's at least as much room above as below (was
+// previously "below first, flip above only if it wouldn't fit").
+//
+// ANCHOR-TO-SIDEBAR FIX (earlier pass): the dropdown used to clamp its
 // position against the whole browser window (`window.innerWidth`), not
 // against the sidebar it's visually anchored inside. The sidebar is
 // narrow (~370px) but sits inside a much wider window (the map fills the
@@ -93,7 +119,7 @@
 // a vh-based ceiling too, so on a short/landscape phone screen the list
 // still shrinks further rather than pushing the header/footer off-screen.
 //
-// TIMEZONE FIX -- REVERTED (this pass): an earlier pass forced
+// TIMEZONE FIX -- REVERTED (earlier pass): an earlier pass forced
 // `timeZone: "UTC"` on formatTime(), reasoning (incorrectly) that this
 // field needed the same fix as AttributeTable.formatDate(). It doesn't,
 // and that change was a regression -- reverted back to no forced zone.
@@ -163,6 +189,16 @@ const MOBILE_BREAKPOINT = 640;
 // common case.
 const LIST_VISIBLE_ROWS = 5;
 const LIST_MAX_HEIGHT_PX = 410;
+// Minimum room (px) required above the trigger before we'll prefer
+// opening upward -- below this, even the "preferred" upward direction
+// wouldn't have enough space to be worth choosing over downward.
+const MIN_PREFERRED_ABOVE_SPACE = 160;
+// Absolute ceiling on the panel's height in either direction, so it never
+// tries to occupy the *entire* available space on a very tall screen.
+const MAX_PANEL_HEIGHT = 420;
+// Floor on the computed maxHeight passed to the panel, so it never
+// collapses to something unusably small on a very cramped screen.
+const MIN_PANEL_HEIGHT = 120;
 
 function startOfTodayISO(): string {
   const d = new Date();
@@ -215,7 +251,22 @@ interface Props {
   refreshKey?: number;
 }
 
-type Coords = { mode: "sheet" } | { mode: "anchored"; top: number; left: number; width: number };
+// `anchor` pins exactly ONE edge of the panel (never both `top` and
+// `bottom` at once) so the box's height comes purely from its own
+// content, growing away from the pinned edge as content is added/removed
+// instead of being stretched or gapped by a guessed height. `maxHeight`
+// is the real available space on that side (not a guess), used as a cap
+// so a very long list still scrolls internally rather than overflowing
+// past the trigger.
+type Coords =
+  | { mode: "sheet" }
+  | {
+      mode: "anchored";
+      left: number;
+      width: number;
+      maxHeight: number;
+      anchor: { side: "bottom"; value: number } | { side: "top"; value: number };
+    };
 
 export default function NotificationBell({ compact = false, onSelectLog, refreshKey }: Props) {
   const { theme } = useSidebarTheme();
@@ -277,10 +328,19 @@ export default function NotificationBell({ compact = false, onSelectLog, refresh
   //  - "anchored": desktop/tablet -> a dropdown clamped to the sidebar's
   //    OWN bounding rect (found via the closest [data-notification-anchor]
   //    ancestor that Sidebar.tsx marks its root with), not the full browser
-  //    window. Anchoring against the window was the bug: the bell lives
-  //    inside a narrow sidebar far from the window's actual right edge, so
-  //    clamping against window.innerWidth let the panel drift away from
-  //    the sidebar entirely and overflow into the map.
+  //    window. Anchoring against the window was the original bug: the bell
+  //    lives inside a narrow sidebar far from the window's actual right
+  //    edge, so clamping against window.innerWidth let the panel drift
+  //    away from the sidebar entirely and overflow into the map.
+  //
+  //    Only ONE of `top`/`bottom` is ever set (see the Coords type above)
+  //    -- that's what lets the panel's height come from its real content
+  //    instead of a guessed estimate. The bell typically sits low in the
+  //    sidebar, so this prefers opening ABOVE the trigger (pinning the
+  //    panel's `bottom` edge to just above the bell) whenever there's at
+  //    least MIN_PREFERRED_ABOVE_SPACE px above AND at least as much room
+  //    above as below; otherwise it opens below (pinning `top`), same as
+  //    before.
   function computeCoords() {
     const el = triggerRef.current;
     if (!el) return;
@@ -306,13 +366,38 @@ export default function NotificationBell({ compact = false, onSelectLog, refresh
     let left = rect.right - width;
     left = Math.max(boundsLeft, Math.min(left, boundsRight - width));
 
-    let top = rect.bottom + 8;
-    const estimatedHeight = Math.min(420, vh - VIEWPORT_MARGIN * 2);
-    if (top + estimatedHeight > vh - VIEWPORT_MARGIN) {
-      top = Math.max(VIEWPORT_MARGIN, rect.top - estimatedHeight - 8);
-    }
+    const gap = 8;
+    const spaceAbove = rect.top - VIEWPORT_MARGIN;
+    const spaceBelow = vh - rect.bottom - VIEWPORT_MARGIN;
 
-    setCoords({ mode: "anchored", top, left, width });
+    const preferAbove = spaceAbove >= MIN_PREFERRED_ABOVE_SPACE && spaceAbove >= spaceBelow;
+
+    if (preferAbove) {
+      // Pin the BOTTOM edge just above the trigger (measured from the
+      // viewport's bottom, since that's what CSS `bottom` expects). No
+      // `top` is set, so the box's actual height is whatever its content
+      // needs -- empty/short content sits flush against the bell, and a
+      // longer list grows upward from that fixed bottom edge.
+      setCoords({
+        mode: "anchored",
+        left,
+        width,
+        maxHeight: Math.max(MIN_PANEL_HEIGHT, Math.min(spaceAbove, MAX_PANEL_HEIGHT)),
+        anchor: { side: "bottom", value: vh - rect.top + gap },
+      });
+    } else {
+      // Pin the TOP edge just below the trigger. No `bottom` is set, so
+      // the box grows downward from that fixed top edge as content is
+      // added -- same "grow from content" behavior, just the other way
+      // up.
+      setCoords({
+        mode: "anchored",
+        left,
+        width,
+        maxHeight: Math.max(MIN_PANEL_HEIGHT, Math.min(spaceBelow, MAX_PANEL_HEIGHT)),
+        anchor: { side: "top", value: rect.bottom + gap },
+      });
+    }
   }
 
   function toggleOpen() {
@@ -348,7 +433,8 @@ export default function NotificationBell({ compact = false, onSelectLog, refresh
 
   // Keep the panel correctly anchored if the window resizes or the page
   // scrolls while it's open (also handles crossing the MOBILE_BREAKPOINT
-  // mid-session, e.g. rotating a tablet).
+  // mid-session, e.g. rotating a tablet, and re-evaluates the
+  // above-vs-below preference if the trigger's position shifts).
   useEffect(() => {
     if (!open) return;
     function handleReposition() {
@@ -424,11 +510,22 @@ export default function NotificationBell({ compact = false, onSelectLog, refresh
               className={
                 coords.mode === "sheet"
                   ? "fixed inset-x-0 bottom-0 z-[90] flex max-h-[75vh] flex-col overflow-hidden rounded-t-[20px]"
-                  : "fixed z-[90] flex max-h-[70vh] flex-col overflow-hidden rounded-[16px]"
+                  : "fixed z-[90] flex flex-col overflow-hidden rounded-[16px]"
               }
               style={{
                 ...(coords.mode === "anchored"
-                  ? { top: coords.top, left: coords.left, width: coords.width }
+                  ? {
+                      left: coords.left,
+                      width: coords.width,
+                      maxHeight: coords.maxHeight,
+                      // Only ONE of these is ever set -- see the Coords
+                      // type + computeCoords comments above for why that
+                      // matters (it's what lets the panel size itself
+                      // from real content instead of a guessed height).
+                      ...(coords.anchor.side === "bottom"
+                        ? { bottom: coords.anchor.value }
+                        : { top: coords.anchor.value }),
+                    }
                   : { paddingBottom: "env(safe-area-inset-bottom)" }),
                 background: theme.bgElevated,
                 border: `1px solid ${hairlineColor}`,

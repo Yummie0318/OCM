@@ -41,6 +41,15 @@ export function computedLotToFeature(lot: ComputedLot): LotFeature {
       patentNo: null,
       remarks: null,
       planUrl: null,
+      // Same reasoning as sheetId/sheetNo above: these all live on
+      // lot_sheets, and a client-side preview built before the lot sheet
+      // is saved has no real row for any of them yet.
+      documentsUrl: null,
+      surveyClass: null,
+      // Same reasoning as encodedBy below: not known until the sheet is
+      // actually saved and joined against municipalities/cenros server-side.
+      cenroId: null,
+      cenro: null,
       // Same reasoning as sheetId/sheetNo above: this is a client-side
       // preview built before the lot sheet is saved, so there's no real
       // lot_sheets.created_by / encoder username yet.
