@@ -2,8 +2,17 @@
 
 // Target path: src/components/map/Sidebar.tsx
 //
-// PROJECTION MODAL (this pass): added a "Project" button to the top of the
-// Layers tab's tree (next to the "Municipalities" heading), which opens
+// DOWNLOAD LAYER (this pass): added a Download icon button to each row in
+// the "Selected" tab (SelectedPanel), alongside the existing view-in-table
+// (Table2) and remove (X) actions. Clicking it calls the new
+// `onDownloadLayer(key)` prop — Sidebar itself has no access to a layer's
+// actual feature geometry (it only ever sees activeSelections' {query,
+// label} metadata), so it just reports the click and lets the map page
+// (which owns `layerData`) open DownloadLayerModal with that key's
+// features. Same "Sidebar reports, page decides" pattern as onViewLayer.
+//
+// PROJECTION MODAL (earlier pass): added a "Project" button to the top of
+// the Layers tab's tree (next to the "Municipalities" heading), which opens
 // <ProjectionModal /> — a checkbox tree that lets the user pick several
 // municipalities / barangays / years at once instead of drilling through
 // the tree branch-by-branch. See ProjectionModal.tsx's own file-top
@@ -136,6 +145,7 @@ import {
   Check,
   Bell,
   Filter,
+  Download,
 } from "lucide-react";
 import type { SelectionMeta, TreeNodeData, LotSearchResult } from "@/lib/geo";
 import { uiFont, type SidebarTheme } from "./sidebarTheme";
@@ -162,6 +172,14 @@ interface SidebarProps {
 onCreateShapefile: () => void;
   /** Called when the user clicks the "view in table" icon on a Selected row. */
   onViewLayer?: (key: string) => void;
+  /**
+   * Called when the user clicks the download icon on a Selected row.
+   * Sidebar has no access to the layer's actual feature geometry — it
+   * just reports which key was clicked, and the map page (which owns
+   * `layerData`) opens DownloadLayerModal with that key's features. Same
+   * "Sidebar reports, page decides" pattern as onViewLayer.
+   */
+  onDownloadLayer?: (key: string) => void;
   /** Key of the selection currently filtering the attribute table (for row highlight). */
   activeTableKey?: string | null;
   /**
@@ -361,6 +379,7 @@ export default function Sidebar({
   onSearchSelect,
   onCreateShapefile,
   onViewLayer,
+  onDownloadLayer,
   activeTableKey = null,
   municipalitiesRefreshKey,
   onActivityLogSelect,
@@ -728,6 +747,7 @@ export default function Sidebar({
             onClearAll={clearAll}
             onBrowse={() => setActiveTab("layers")}
             onViewLayer={onViewLayer}
+            onDownloadLayer={onDownloadLayer}
             activeTableKey={activeTableKey}
           />
         )}
@@ -800,9 +820,9 @@ function TabButton({
 // ProjectionModal.tsx) — so rows wrap to two lines instead of truncating
 // to one, with the full text still available via the tooltip.
 //
-// Each row now carries three actions: view-in-table (Table2), and remove
-// (X). The row currently driving the attribute table (activeTableKey ===
-// key) gets an accent ring so it's obvious at a glance which layer is
+// Each row now carries four actions: download, view-in-table (Table2), and
+// remove (X). The row currently driving the attribute table (activeTableKey
+// === key) gets an accent ring so it's obvious at a glance which layer is
 // being inspected below. The leading icon distinguishes a search result
 // (`search:<id>` key), a notification-bell pick (`sheet:<id>`), a
 // whole-municipality projection (`proj:muni:<id>`), a whole-barangay
@@ -816,6 +836,7 @@ function SelectedPanel({
   onClearAll,
   onBrowse,
   onViewLayer,
+  onDownloadLayer,
   activeTableKey,
 }: {
   activeEntries: [string, SelectionMeta][];
@@ -823,6 +844,7 @@ function SelectedPanel({
   onClearAll: () => void;
   onBrowse: () => void;
   onViewLayer?: (key: string) => void;
+  onDownloadLayer?: (key: string) => void;
   activeTableKey?: string | null;
 }) {
   if (activeEntries.length === 0) {
@@ -901,6 +923,20 @@ function SelectedPanel({
                 <span className="min-w-0 flex-1 text-[12px] font-medium leading-snug text-[var(--sb-accent-text)]">
                   {sel.label || "Untitled"}
                 </span>
+              </Tooltip>
+
+              {/* Download this layer as KML/Shapefile/GeoJSON — opens
+                  DownloadLayerModal (owned by the map page, since it's
+                  the one holding the actual feature geometry for this
+                  key). */}
+              <Tooltip label="Download layer" side="top">
+                <button
+                  type="button"
+                  onClick={() => onDownloadLayer?.(key)}
+                  className="mt-0.5 flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded-[7px] border-0 bg-transparent p-0 text-[var(--sb-accent)] transition-colors duration-100 hover:bg-[var(--sb-accent)]/15"
+                >
+                  <Download size={12} />
+                </button>
               </Tooltip>
 
               {/* View this layer's lots in the attribute table below,

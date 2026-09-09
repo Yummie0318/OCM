@@ -35,11 +35,26 @@ export interface LotFeature {
     patentNo: string | null;
     remarks: string | null;
     planUrl: string | null;
+    // Was previously only read via `(f.properties as any).documentsUrl` in
+    // AttributeTable.tsx even though the API already returned it — now
+    // properly typed.
+    documentsUrl: string | null;
+    // Same as above — API already returned it, now typed.
+    surveyClass: "admin" | "private" | null;
     // Username of the user who encoded this lot's sheet (lot_sheets.created_by
     // -> users.username). Captured per-sheet, not per-lot, so every lot on
     // the same sheet shows the same encoder. Null for sheets saved before
     // created_by was tracked, or if the user account was later removed.
     encodedBy: string | null;
+    // Added for the CENRO -> Municipality -> Barangay -> Lot Sheet report
+    // (src/app/reports/lots). Comes from municipalities.cenro_id -> cenros,
+    // joined off the lot's l.municipality_id — the same column the
+    // cenro_ids facet filter itself matches against (see route.ts), so
+    // this always stays consistent with what "CENRO filter" actually
+    // matched. Null when l.municipality_id is null (e.g. a sheet located
+    // only via control_point, with no legacy per-lot municipality FK set).
+    cenroId: number | null;
+    cenro: string | null;
   };
 }
 
@@ -60,7 +75,7 @@ export interface TreeNodeData {
 }
 
 export interface SelectionMeta {
-  query: Record<string, string | number>;
+  query: Record<string, string | number | number[]>;
   label: string;
 }
 

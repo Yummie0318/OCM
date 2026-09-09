@@ -202,6 +202,7 @@ import { uiFont } from "@/components/map/sidebarTheme";
 import type { LotFeature, SelectionMeta, LotSearchResult } from "@/lib/geo";
 import type { ActivityLogRow } from "@/components/NotificationBell";
 import CreateShapefileModal from "@/components/CreateShapefileModal";
+import DownloadLayerModal from "@/components/map/DownloadLayerModal";
 
 const SIDEBAR_MIN_WIDTH = 220;
 const SIDEBAR_MAX_WIDTH = 480;
@@ -339,6 +340,8 @@ function MapViewerPageInner() {
   const [detailPanelOpen, setDetailPanelOpen] = useState(false);
 
   const [tableFilterKey, setTableFilterKey] = useState<string | null>(null);
+
+  const [downloadKey, setDownloadKey] = useState<string | null>(null);
 
   const [searchError, setSearchError] = useState(false);
 
@@ -660,6 +663,10 @@ function MapViewerPageInner() {
     // user had it collapsed, bring it back rather than silently doing
     // nothing.
     setTableVisible(true);
+  }
+
+  function handleDownloadLayer(key: string) {
+    setDownloadKey(key);
   }
 
   useEffect(() => {
@@ -1224,6 +1231,7 @@ function MapViewerPageInner() {
               onSearchSelect={handleSearchSelect}
               onCreateShapefile={() => setCreateModalOpen(true)}
               onViewLayer={handleViewLayer}
+              onDownloadLayer={handleDownloadLayer}
               activeTableKey={tableFilterKey}
               onActivityLogSelect={handleActivityLogSelect}
               notificationsRefreshKey={notificationsRefreshKey}
@@ -1270,6 +1278,7 @@ function MapViewerPageInner() {
                 onSearchSelect={handleSearchSelect}
                 onCreateShapefile={() => setCreateModalOpen(true)}
                 onViewLayer={handleViewLayer}
+                onDownloadLayer={handleDownloadLayer}
                 activeTableKey={tableFilterKey}
                 onActivityLogSelect={handleActivityLogSelect}
                 notificationsRefreshKey={notificationsRefreshKey}
@@ -1488,6 +1497,12 @@ function MapViewerPageInner() {
       <CreateShapefileModal
         open={createModalOpen}
         onClose={() => setCreateModalOpen(false)}
+      />
+      <DownloadLayerModal
+        open={!!downloadKey}
+        onClose={() => setDownloadKey(null)}
+        label={downloadKey ? activeSelections[downloadKey]?.label ?? "Layer" : ""}
+        features={downloadKey ? layerData[downloadKey] : undefined}
       />
     </main>
   );

@@ -2,88 +2,78 @@
 
 // Target path: src/components/map/ProjectionModal.tsx
 //
-// CENRO LEVEL (this pass): tree gained a level — CENRO -> Municipality ->
-// Barangay -> Year (was Municipality -> Barangay -> Year) — so this modal's
-// checkbox tree now starts one level higher, mirroring Sidebar.tsx's new
-// CenroNode -> MunicipalityNode -> BarangayNode chain. Everything below
-// CENRO is unchanged in behavior, just nested one level deeper in state:
+// REBUILT AS TABS: this used to be a single nested checkbox tree
+// (CENRO -> Municipality -> Barangay -> Year). It's now 4 flat tabs —
+// CENRO, Municipality, Barangay, Year — each just a checkbox list for that
+// level, with FULL CROSS-FILTERING between them: whichever tab you're
+// looking at is always narrowed by whatever's checked in the other three.
+// e.g. check "2023" in the Year tab, then switch to Municipality — you'll
+// only see municipalities that actually have lots surveyed in 2023.
 //
-//   - CENRO fully checked -> key `proj:cenro:<id>`, query { cenro_id }
-//     (all municipalities, all barangays, all years)
-//   - Municipality fully checked (its CENRO isn't) -> key `proj:muni:<id>`,
-//     query { municipality_id }  (all barangays, all years)
-//   - Barangay fully checked (its municipality isn't) -> key
-//     `proj:brgy:<id>`, query { barangay_id }  (all years in that barangay)
-//   - A specific year checked under a barangay (barangay isn't fully
-//     checked) -> key `year:<barangayId>:<year>`, query
-//     { barangay_id, year } -- this is the SAME key YearRow in Sidebar.tsx
-//     uses, so a year picked here shows as checked if the user later
-//     expands that barangay in the normal tree, and a year checked in the
-//     tree shows up as already-selected if they reopen this modal... (it
-//     doesn't currently pre-seed from activeSelections -- see note below).
+// What "Project" produces: combines everything checked across all 4 tabs
+// into a single AND filter:
 //
-// Checking a parent (CENRO/municipality/barangay) visually disables and
-// "checks" everything under it rather than trying to keep independent
-// selection states in sync -- the parent's single query already covers
-// everything under it, so there's nothing extra to send.
+//   cenro IN (checked cenros)
+//   AND municipality IN (checked municipalities)
+//   AND barangay IN (checked barangays)
+//   AND year IN (checked years)
 //
-// NOTE: this modal always opens with a clean slate (local state reset on
-// every `open` transition) rather than pre-populating from the sidebar's
-// current activeSelections. That keeps the logic simple -- Apply is
-// purely additive on top of whatever's already selected, same as
-// checking a year or picking a search result. If you'd rather it show
-// what's already active when reopened, that's a reasonable follow-up.
+// (any facet left empty is just omitted from the AND — checking nothing in
+// a tab means "don't filter on that facet at all", not "match nothing").
 //
-// Fetching mirrors CenroNode/MunicipalityNode/BarangayNode in Sidebar.tsx
-// exactly (/api/map/tree?level=municipalities&cenro_id=,
-// ?level=barangays&municipality_id=, ?level=years&barangay_id=), just
-// cached in this component's own local state instead of theirs.
+// Each Project adds ONE new entry to the sidebar's activeSelections (keyed
+// `filter:<timestamp>:<random>`) — same mechanism as a single year pick or
+// a search result today, so multiple saved filter-sets can coexist and be
+// toggled/removed independently, same as multiple layers could before.
+//
+// REPORTING (this pass): a second button, "Generate Report", builds the
+// exact same combined facet query as Project but instead of applying it to
+// the map, opens /reports/lots?<query>&label=<filterLabel> in a new tab.
+// That report page hits /api/map/lots with the identical params, so "what's
+// on the map" and "what's in the report" always share one query contract —
+// see route.ts's file-top note and src/app/reports/lots/page.tsx.
+//
+// Cross-filter fetching: a tab's option list is only fetched when the user
+// switches TO it (not on every checkbox click), since checking/unchecking
+// items within a tab never changes that tab's own list (a facet is never
+// filtered by itself — see route.ts's file-top note on why). Switching
+// tabs re-fetches using whatever's checked everywhere else at that moment.
+//
+// Fetches from /api/map/tree?level=facets&target=<level>&cenro_ids=...
+// &municipality_ids=...&barangay_ids=...&years=... — see route.ts.
 //
 // Rendered via createPortal to document.body (same pattern as Sidebar's
 // Tooltip) so it's never clipped by the sidebar's own overflow, and reads
 // theme colors via useSidebarTheme() -- which works fine through a portal
 // since React context follows the component tree, not the DOM tree.
+//
+// RESPONSIVE / FIXED-SIZE PASS: the dialog now uses a fixed height
+// (`h-[min(620px,85vh)]`) instead of `max-h-[...]`, so it no longer grows
+// or shrinks depending on how many rows the active tab happens to have —
+// only the checkbox list scrolls internally. The shell also picks up side
+// margins and the footer buttons stack on narrow screens so three actions
+// never overflow a phone-width viewport.
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import {
-  X,
-  Filter,
-  Landmark,
-  Building2,
-  MapPin,
-  CalendarDays,
-  Plus,
-  Minus,
-  Check,
-  Loader2,
-} from "lucide-react";
+import { X, Filter, Landmark, Building2, MapPin, CalendarDays, Check, Loader2, FileText } from "lucide-react";
 import type { TreeNodeData, SelectionMeta } from "@/lib/geo";
 import { useSidebarTheme } from "./SidebarThemeContext";
 import { uiFont } from "./sidebarTheme";
 
-interface BarangayState {
-  data: TreeNodeData;
-  checked: boolean;
-  expanded: boolean;
-  years: TreeNodeData[] | null;
-  yearChecked: Record<string, boolean>;
-}
+type FacetKey = "cenros" | "municipalities" | "barangays" | "years";
 
-interface MunicipalityState {
-  data: TreeNodeData;
-  checked: boolean;
-  expanded: boolean;
-  barangays: TreeNodeData[] | null;
-  barangayState: Record<string, BarangayState>;
-}
+const TABS: { key: FacetKey; label: string; icon: typeof Landmark; queryParam: string }[] = [
+  { key: "cenros", label: "CENRO", icon: Landmark, queryParam: "cenro_ids" },
+  { key: "municipalities", label: "Municipality", icon: Building2, queryParam: "municipality_ids" },
+  { key: "barangays", label: "Barangay", icon: MapPin, queryParam: "barangay_ids" },
+  { key: "years", label: "Year", icon: CalendarDays, queryParam: "years" },
+];
 
-interface CenroState {
-  data: TreeNodeData;
-  checked: boolean;
-  expanded: boolean;
-  municipalities: TreeNodeData[] | null;
-  muniState: Record<string, MunicipalityState>;
+type SelectedMap = Record<FacetKey, Map<string, TreeNodeData>>;
+
+function emptySelected(): SelectedMap {
+  return { cenros: new Map(), municipalities: new Map(), barangays: new Map(), years: new Map() };
 }
 
 export interface ProjectionResult {
@@ -102,36 +92,28 @@ async function safeFetchArray(url: string): Promise<TreeNodeData[]> {
 }
 
 const hairline = "color-mix(in srgb, var(--sb-border) 75%, transparent)";
-const hairlineSoft = "color-mix(in srgb, var(--sb-border) 45%, transparent)";
 
-function TriCheckbox({
-  state,
-  onChange,
-  disabled,
-}: {
-  state: "checked" | "unchecked" | "partial";
-  onChange: () => void;
-  disabled?: boolean;
-}) {
+function ItemCheckbox({ checked, onChange }: { checked: boolean; onChange: () => void }) {
   return (
     <button
       type="button"
-      disabled={disabled}
       onClick={(e) => {
         e.stopPropagation();
         onChange();
       }}
-      className="relative flex h-[16px] w-[16px] flex-shrink-0 items-center justify-center rounded-[4.5px] border-0 transition-colors disabled:cursor-default"
+      className="relative flex h-[16px] w-[16px] flex-shrink-0 items-center justify-center rounded-[4.5px] border-0 transition-colors"
       style={{
-        border: `1px solid ${state === "unchecked" ? "var(--sb-border)" : "var(--sb-accent)"}`,
-        background: state === "unchecked" ? "var(--sb-bg)" : "var(--sb-accent)",
-        opacity: disabled ? 0.5 : 1,
+        border: `1px solid ${checked ? "var(--sb-accent)" : "var(--sb-border)"}`,
+        background: checked ? "var(--sb-accent)" : "var(--sb-bg)",
       }}
     >
-      {state === "checked" && <Check size={11} strokeWidth={3} color="white" />}
-      {state === "partial" && <span className="block h-[2px] w-[8px] rounded-full bg-white" />}
+      {checked && <Check size={11} strokeWidth={3} color="white" />}
     </button>
   );
+}
+
+function pluralize(n: number, singular: string, plural: string) {
+  return n === 1 ? singular : plural;
 }
 
 export default function ProjectionModal({
@@ -145,324 +127,157 @@ export default function ProjectionModal({
 }) {
   const { theme, vars } = useSidebarTheme();
   const [mounted, setMounted] = useState(false);
-  const [cenros, setCenros] = useState<TreeNodeData[] | null>(null);
-  const [cenroState, setCenroState] = useState<Record<string, CenroState>>({});
+  const [activeTab, setActiveTab] = useState<FacetKey>("cenros");
+  const [selected, setSelected] = useState<SelectedMap>(emptySelected());
+  const [options, setOptions] = useState<Record<FacetKey, TreeNodeData[] | null>>({
+    cenros: null,
+    municipalities: null,
+    barangays: null,
+    years: null,
+  });
 
   useEffect(() => setMounted(true), []);
 
-  // Fresh slate every time the modal opens — including the CENRO list
-  // itself, which this component now owns instead of receiving as a prop
-  // (Sidebar.tsx no longer loads a CENRO list for anything).
+  // Fresh slate every time the modal opens.
   useEffect(() => {
     if (open) {
-      setCenroState({});
-      setCenros(null);
-      safeFetchArray("/api/map/tree?level=cenros").then(setCenros);
+      setSelected(emptySelected());
+      setOptions({ cenros: null, municipalities: null, barangays: null, years: null });
+      setActiveTab("cenros");
     }
   }, [open]);
 
+  // Fetch the active tab's option list whenever the modal is open and the
+  // active tab changes -- deliberately NOT re-fetched on every checkbox
+  // click, since a tab's own selections never filter its own list (see
+  // file-top note). Switching tabs is the only time cross-filtering needs
+  // a fresh fetch, and it always uses whatever is checked right now in the
+  // other three tabs.
+  useEffect(() => {
+    if (!open) return;
+    const params = new URLSearchParams();
+    params.set("level", "facets");
+    params.set("target", activeTab);
+    for (const tab of TABS) {
+      const ids = Array.from(selected[tab.key].keys());
+      if (ids.length > 0) params.set(tab.queryParam, ids.join(","));
+    }
+    setOptions((prev) => ({ ...prev, [activeTab]: null }));
+    safeFetchArray(`/api/map/tree?${params.toString()}`).then((data) => {
+      setOptions((prev) => ({ ...prev, [activeTab]: data }));
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, activeTab]);
+
+  function toggleItem(tab: FacetKey, item: TreeNodeData) {
+    setSelected((prev) => {
+      const next = new Map(prev[tab]);
+      const key = String(item.id);
+      if (next.has(key)) next.delete(key);
+      else next.set(key, item);
+      return { ...prev, [tab]: next };
+    });
+  }
+
+  function toggleSelectAll(tab: FacetKey) {
+    const opts = options[tab];
+    if (!opts || opts.length === 0) return;
+    setSelected((prev) => {
+      const next = new Map(prev[tab]);
+      const allChecked = opts.every((o) => next.has(String(o.id)));
+      if (allChecked) {
+        for (const o of opts) next.delete(String(o.id));
+      } else {
+        for (const o of opts) next.set(String(o.id), o);
+      }
+      return { ...prev, [tab]: next };
+    });
+  }
+
+  const totalSelectedCount =
+    selected.cenros.size + selected.municipalities.size + selected.barangays.size + selected.years.size;
+
+  const filterLabel = useMemo(() => {
+    const parts: string[] = [];
+    if (selected.cenros.size > 0) {
+      parts.push(
+        selected.cenros.size === 1
+          ? String(Array.from(selected.cenros.values())[0].label)
+          : `${selected.cenros.size} CENROs`
+      );
+    }
+    if (selected.municipalities.size > 0) {
+      parts.push(
+        selected.municipalities.size === 1
+          ? String(Array.from(selected.municipalities.values())[0].label)
+          : `${selected.municipalities.size} ${pluralize(selected.municipalities.size, "Municipality", "Municipalities")}`
+      );
+    }
+    if (selected.barangays.size > 0) {
+      parts.push(
+        selected.barangays.size === 1
+          ? String(Array.from(selected.barangays.values())[0].label)
+          : `${selected.barangays.size} ${pluralize(selected.barangays.size, "Barangay", "Barangays")}`
+      );
+    }
+    if (selected.years.size > 0) {
+      parts.push(
+        Array.from(selected.years.values())
+          .map((y) => String(y.label))
+          .sort()
+          .join(", ")
+      );
+    }
+    return parts.length > 0 ? parts.join(" · ") : "No filters selected yet";
+  }, [selected]);
+
   if (!mounted || !open) return null;
 
-  function ensureCenro(c: TreeNodeData): CenroState {
-    return (
-      cenroState[String(c.id)] ?? {
-        data: c,
-        checked: false,
-        expanded: false,
-        municipalities: null,
-        muniState: {},
-      }
-    );
-  }
-
-  function toggleCenroExpand(c: TreeNodeData) {
-    const key = String(c.id);
-    const current = ensureCenro(c);
-    const nextExpanded = !current.expanded;
-    setCenroState((prev) => ({ ...prev, [key]: { ...current, expanded: nextExpanded } }));
-    if (nextExpanded && current.municipalities === null) {
-      safeFetchArray(`/api/map/tree?level=municipalities&cenro_id=${c.id}`).then((municipalities) => {
-        setCenroState((prev) => {
-          const cur = prev[key];
-          if (!cur) return prev;
-          return { ...prev, [key]: { ...cur, municipalities } };
-        });
-      });
-    }
-  }
-
-  function toggleCenroChecked(c: TreeNodeData) {
-    const key = String(c.id);
-    const current = ensureCenro(c);
-    setCenroState((prev) => ({ ...prev, [key]: { ...current, checked: !current.checked } }));
-  }
-
-  function toggleMuniExpand(c: TreeNodeData, m: TreeNodeData) {
-    const cKey = String(c.id);
-    const mKey = String(m.id);
-    setCenroState((prev) => {
-      const cState = prev[cKey] ?? ensureCenro(c);
-      const mState: MunicipalityState =
-        cState.muniState[mKey] ?? { data: m, checked: false, expanded: false, barangays: null, barangayState: {} };
-      const nextExpanded = !mState.expanded;
-      const nextMState = { ...mState, expanded: nextExpanded };
-      if (nextExpanded && mState.barangays === null) {
-        safeFetchArray(`/api/map/tree?level=barangays&municipality_id=${m.id}`).then((barangays) => {
-          setCenroState((p2) => {
-            const c2 = p2[cKey];
-            if (!c2) return p2;
-            const m2 = c2.muniState[mKey];
-            if (!m2) return p2;
-            return {
-              ...p2,
-              [cKey]: { ...c2, muniState: { ...c2.muniState, [mKey]: { ...m2, barangays } } },
-            };
-          });
-        });
-      }
-      return {
-        ...prev,
-        [cKey]: { ...cState, muniState: { ...cState.muniState, [mKey]: nextMState } },
-      };
-    });
-  }
-
-  function toggleMuniChecked(c: TreeNodeData, m: TreeNodeData) {
-    const cKey = String(c.id);
-    const mKey = String(m.id);
-    setCenroState((prev) => {
-      const cState = prev[cKey] ?? ensureCenro(c);
-      const mState: MunicipalityState =
-        cState.muniState[mKey] ?? { data: m, checked: false, expanded: false, barangays: null, barangayState: {} };
-      return {
-        ...prev,
-        [cKey]: { ...cState, muniState: { ...cState.muniState, [mKey]: { ...mState, checked: !mState.checked } } },
-      };
-    });
-  }
-
-  function toggleBrgyExpand(c: TreeNodeData, m: TreeNodeData, b: TreeNodeData) {
-    const cKey = String(c.id);
-    const mKey = String(m.id);
-    const bKey = String(b.id);
-    setCenroState((prev) => {
-      const cState = prev[cKey] ?? ensureCenro(c);
-      const mState: MunicipalityState =
-        cState.muniState[mKey] ?? { data: m, checked: false, expanded: false, barangays: null, barangayState: {} };
-      const bState: BarangayState =
-        mState.barangayState[bKey] ?? { data: b, checked: false, expanded: false, years: null, yearChecked: {} };
-      const nextExpanded = !bState.expanded;
-      const nextBState = { ...bState, expanded: nextExpanded };
-      if (nextExpanded && bState.years === null) {
-        safeFetchArray(`/api/map/tree?level=years&barangay_id=${b.id}`).then((years) => {
-          setCenroState((p2) => {
-            const c2 = p2[cKey];
-            if (!c2) return p2;
-            const m2 = c2.muniState[mKey];
-            if (!m2) return p2;
-            const b2 = m2.barangayState[bKey];
-            if (!b2) return p2;
-            return {
-              ...p2,
-              [cKey]: {
-                ...c2,
-                muniState: {
-                  ...c2.muniState,
-                  [mKey]: { ...m2, barangayState: { ...m2.barangayState, [bKey]: { ...b2, years } } },
-                },
-              },
-            };
-          });
-        });
-      }
-      return {
-        ...prev,
-        [cKey]: {
-          ...cState,
-          muniState: {
-            ...cState.muniState,
-            [mKey]: { ...mState, barangayState: { ...mState.barangayState, [bKey]: nextBState } },
-          },
-        },
-      };
-    });
-  }
-
-  function toggleBrgyChecked(c: TreeNodeData, m: TreeNodeData, b: TreeNodeData) {
-    const cKey = String(c.id);
-    const mKey = String(m.id);
-    const bKey = String(b.id);
-    setCenroState((prev) => {
-      const cState = prev[cKey] ?? ensureCenro(c);
-      const mState: MunicipalityState =
-        cState.muniState[mKey] ?? { data: m, checked: false, expanded: false, barangays: null, barangayState: {} };
-      const bState: BarangayState =
-        mState.barangayState[bKey] ?? { data: b, checked: false, expanded: false, years: null, yearChecked: {} };
-      return {
-        ...prev,
-        [cKey]: {
-          ...cState,
-          muniState: {
-            ...cState.muniState,
-            [mKey]: {
-              ...mState,
-              barangayState: { ...mState.barangayState, [bKey]: { ...bState, checked: !bState.checked } },
-            },
-          },
-        },
-      };
-    });
-  }
-
-  function toggleYearChecked(c: TreeNodeData, m: TreeNodeData, b: TreeNodeData, y: TreeNodeData) {
-    const cKey = String(c.id);
-    const mKey = String(m.id);
-    const bKey = String(b.id);
-    const yKey = String(y.id);
-    setCenroState((prev) => {
-      const cState = prev[cKey] ?? ensureCenro(c);
-      const mState: MunicipalityState =
-        cState.muniState[mKey] ?? { data: m, checked: false, expanded: false, barangays: null, barangayState: {} };
-      const bState: BarangayState =
-        mState.barangayState[bKey] ?? { data: b, checked: false, expanded: false, years: null, yearChecked: {} };
-      return {
-        ...prev,
-        [cKey]: {
-          ...cState,
-          muniState: {
-            ...cState.muniState,
-            [mKey]: {
-              ...mState,
-              barangayState: {
-                ...mState.barangayState,
-                [bKey]: { ...bState, yearChecked: { ...bState.yearChecked, [yKey]: !bState.yearChecked[yKey] } },
-              },
-            },
-          },
-        },
-      };
-    });
-  }
-
-  function muniPartial(mState: MunicipalityState): boolean {
-    if (mState.checked) return false;
-    return Object.values(mState.barangayState).some(
-      (b) => b.checked || Object.values(b.yearChecked).some(Boolean)
-    );
-  }
-
-  function barangayPartial(bState: BarangayState): boolean {
-    if (bState.checked) return false;
-    return Object.values(bState.yearChecked).some(Boolean);
-  }
-
-  // A CENRO reads "partial" (dash) if it isn't itself fully checked but
-  // something underneath it (a municipality, barangay, or year) is.
-  function cenroPartial(cState: CenroState): boolean {
-    if (cState.checked) return false;
-    return Object.values(cState.muniState).some((m) => m.checked || muniPartial(m));
-  }
-
-  const allCenroChecked =
-    !!cenros && cenros.length > 0 && cenros.every((c) => cenroState[String(c.id)]?.checked);
-
-  function toggleSelectAllCenros() {
-    if (!cenros) return;
-    const nextChecked = !allCenroChecked;
-    setCenroState((prev) => {
-      const next = { ...prev };
-      for (const c of cenros) {
-        const key = String(c.id);
-        next[key] = { ...ensureCenro(c), ...next[key], checked: nextChecked };
-      }
-      return next;
-    });
-  }
-
-  const totalSelectedCount = Object.values(cenroState).reduce((sum, c) => {
-    if (c.checked) return sum + 1;
-    return (
-      sum +
-      Object.values(c.muniState).reduce((s2, m) => {
-        if (m.checked) return s2 + 1;
-        return (
-          s2 +
-          Object.values(m.barangayState).reduce((s3, b) => {
-            if (b.checked) return s3 + 1;
-            return s3 + Object.values(b.yearChecked).filter(Boolean).length;
-          }, 0)
-        );
-      }, 0)
-    );
-  }, 0);
-
-  function buildResults(): ProjectionResult[] {
-    const results: ProjectionResult[] = [];
-    for (const cState of Object.values(cenroState)) {
-      const cLabel = String(cState.data.label);
-      if (cState.checked) {
-        results.push({
-          key: `proj:cenro:${cState.data.id}`,
-          meta: {
-            query: { cenro_id: cState.data.id },
-            label: `${cLabel} (all municipalities, all barangays, all years)`,
-          },
-        });
-        continue;
-      }
-      for (const mState of Object.values(cState.muniState)) {
-        const mLabel = String(mState.data.label);
-        if (mState.checked) {
-          results.push({
-            key: `proj:muni:${mState.data.id}`,
-            meta: {
-              query: { municipality_id: mState.data.id },
-              label: `${cLabel} · ${mLabel} (all barangays, all years)`,
-            },
-          });
-          continue;
-        }
-        for (const bState of Object.values(mState.barangayState)) {
-          const bLabel = String(bState.data.label);
-          if (bState.checked) {
-            results.push({
-              key: `proj:brgy:${bState.data.id}`,
-              meta: {
-                query: { barangay_id: bState.data.id },
-                label: `${cLabel} · ${mLabel}, ${bLabel} (all years)`,
-              },
-            });
-            continue;
-          }
-          for (const [yearId, isChecked] of Object.entries(bState.yearChecked)) {
-            if (!isChecked) continue;
-            const yearNode = bState.years?.find((y) => String(y.id) === yearId);
-            const yLabel = yearNode ? String(yearNode.label) : yearId;
-            results.push({
-              key: `year:${bState.data.id}:${yearId}`,
-              meta: {
-                query: { barangay_id: bState.data.id, year: yearId },
-                label: `${cLabel} · ${mLabel}, ${bLabel}, ${yLabel}`,
-              },
-            });
-          }
-        }
-      }
-    }
-    return results;
+  // Shared by both "Project" (applies to the map) and "Generate Report"
+  // (opens the printable report in a new tab) — both need the exact same
+  // combined facet query, just delivered to a different place.
+  function buildFacetQuery(): { query: Record<string, number[]>; label: string } {
+    const query: Record<string, number[]> = {};
+    if (selected.cenros.size > 0) query.cenro_ids = Array.from(selected.cenros.keys()).map(Number);
+    if (selected.municipalities.size > 0)
+      query.municipality_ids = Array.from(selected.municipalities.keys()).map(Number);
+    if (selected.barangays.size > 0) query.barangay_ids = Array.from(selected.barangays.keys()).map(Number);
+    if (selected.years.size > 0) query.years = Array.from(selected.years.keys()).map(Number);
+    return { query, label: filterLabel };
   }
 
   function handleApply() {
-    const results = buildResults();
-    if (results.length === 0) return;
-    onApply(results);
+    if (totalSelectedCount === 0) return;
+    const { query, label } = buildFacetQuery();
+    const key = `filter:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
+    onApply([{ key, meta: { query, label } }]);
   }
 
+  function handleGenerateReport() {
+    if (totalSelectedCount === 0) return;
+    const { query, label } = buildFacetQuery();
+    const params = new URLSearchParams();
+    for (const [key, ids] of Object.entries(query)) {
+      if (ids.length > 0) params.set(key, ids.join(","));
+    }
+    params.set("label", label);
+    window.open(`/reports/lots?${params.toString()}`, "_blank", "noopener,noreferrer");
+  }
+
+  const activeOptions = options[activeTab];
+  const activeSelectedMap = selected[activeTab];
+  const allChecked = !!activeOptions && activeOptions.length > 0 && activeOptions.every((o) => activeSelectedMap.has(String(o.id)));
+
   return createPortal(
-    <div className={`${uiFont.className} fixed inset-0 z-[200] flex items-center justify-center px-4`} style={vars}>
+    <div className={`${uiFont.className} fixed inset-0 z-[200] flex items-center justify-center px-3 sm:px-4`} style={vars}>
       <div className="absolute inset-0" style={{ background: theme.overlayBg }} onClick={onClose} />
       <div
-        className="relative flex max-h-[80vh] w-full max-w-[440px] flex-col overflow-hidden rounded-[16px]"
+        // FIXED HEIGHT: was `max-h-[80vh]`, which let the dialog shrink to
+        // fit whatever the active tab's list happened to contain. Using an
+        // explicit height (clamped to the viewport on short screens) keeps
+        // the dialog's outer shape constant no matter how many rows are
+        // loaded — only the list body scrolls.
+        className="relative flex h-[min(620px,85vh)] w-[calc(100%-1.5rem)] max-w-[440px] flex-col overflow-hidden rounded-[16px] sm:w-full"
         style={{ background: "var(--sb-bg-elevated)", boxShadow: theme.shadow }}
       >
         <div className="flex flex-shrink-0 items-center gap-2 px-4 py-3" style={{ borderBottom: `1px solid ${hairline}` }}>
@@ -477,233 +292,133 @@ export default function ProjectionModal({
           </button>
         </div>
 
-        <p className="flex-shrink-0 px-4 pt-2.5 text-[11.5px] leading-snug text-[var(--sb-text-faint)]">
-          Pick any combination of CENROs, municipalities, barangays, and years to project onto the map
-          at once. Checking a parent includes everything under it.
+        <p className="flex-shrink-0 px-4 pt-2.5 text-[11px] leading-snug text-[var(--sb-text-faint)] sm:text-[11.5px]">
+          Pick any combination across the tabs below. Project applies the combined filter to the map; Generate Report opens a printable report in a new tab.
         </p>
 
-        <div className="mb-1 mt-2.5 flex flex-shrink-0 items-center justify-between px-4">
+        {/* Tabs */}
+        <div className="mx-3 mt-3 flex flex-shrink-0 items-center gap-1 rounded-full bg-[var(--sb-hover)] p-1 sm:mx-4">
+          {TABS.map((tab) => {
+            const count = selected[tab.key].size;
+            const Icon = tab.icon;
+            return (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => setActiveTab(tab.key)}
+                className={`flex flex-1 items-center justify-center gap-1 rounded-full border-0 px-1 py-[6px] text-[9.5px] font-semibold transition-colors duration-100 sm:px-1.5 sm:text-[10.5px] ${
+                  activeTab === tab.key
+                    ? "bg-[var(--sb-bg)] text-[var(--sb-accent)] shadow-sm"
+                    : "bg-transparent text-[var(--sb-text-muted)] hover:text-[var(--sb-text)]"
+                }`}
+              >
+                <Icon size={12} className="flex-shrink-0" />
+                <span className="truncate">{tab.label}</span>
+                {count > 0 && (
+                  <span
+                    className={`flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[9px] font-bold tabular-nums ${
+                      activeTab === tab.key ? "bg-[var(--sb-accent)] text-white" : "bg-[var(--sb-border)] text-[var(--sb-text-muted)]"
+                    }`}
+                  >
+                    {count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Select all / clear for the active tab */}
+        <div className="mb-1 mt-2.5 flex flex-shrink-0 items-center justify-between px-3 sm:px-4">
           <span className="text-[10px] font-bold uppercase tracking-wide text-[var(--sb-text-faint)]">
-            CENRO Offices
+            {TABS.find((t) => t.key === activeTab)?.label}
           </span>
-          {cenros && cenros.length > 0 && (
+          {activeOptions && activeOptions.length > 0 && (
             <button
               type="button"
-              onClick={toggleSelectAllCenros}
+              onClick={() => toggleSelectAll(activeTab)}
               className="border-0 bg-transparent p-0 text-[10.5px] font-semibold text-[var(--sb-accent)] hover:opacity-70"
             >
-              {allCenroChecked ? "Clear all" : "Select all"}
+              {allChecked ? "Clear all" : "Select all"}
             </button>
           )}
         </div>
 
+        {/* Active tab's checkbox list — the only scrollable region, so the
+            dialog's outer height (set above) never changes with content. */}
         <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-          {cenros === null && (
+          {activeOptions === null && (
             <div className="flex items-center justify-center gap-2 py-8 text-[12px] text-[var(--sb-text-faint)]">
               <Loader2 size={14} className="animate-spin" />
-              Loading CENROs…
+              Loading…
             </div>
           )}
-          {cenros?.length === 0 && (
-            <div className="px-2 py-6 text-center text-[12px] text-[var(--sb-text-faint)]">No saved lots yet.</div>
+          {activeOptions?.length === 0 && (
+            <div className="px-2 py-6 text-center text-[12px] text-[var(--sb-text-faint)]">
+              No matches with the current filters.
+            </div>
           )}
-          {cenros?.map((c) => {
-            const cState = ensureCenro(c);
-            const cPartial = cenroPartial(cState);
+          {activeOptions?.map((item) => {
+            const checked = activeSelectedMap.has(String(item.id));
+            const Icon = TABS.find((t) => t.key === activeTab)!.icon;
             return (
-              <div key={c.id} className="mb-0.5">
-                <div className="flex items-center gap-2 rounded-[9px] px-1.5 py-[6px] transition-colors duration-100 hover:bg-[var(--sb-hover)]">
-                  <button
-                    type="button"
-                    onClick={() => toggleCenroExpand(c)}
-                    className="flex h-[16px] w-[16px] flex-shrink-0 items-center justify-center text-[var(--sb-text-faint)]"
-                  >
-                    {cState.expanded ? <Minus size={11} /> : <Plus size={11} />}
-                  </button>
-                  <TriCheckbox
-                    state={cState.checked ? "checked" : cPartial ? "partial" : "unchecked"}
-                    onChange={() => toggleCenroChecked(c)}
-                  />
-                  <Landmark size={13} className="flex-shrink-0 text-[var(--sb-text-faint)]" />
-                  <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-[var(--sb-text)]">
-                    {c.label}
-                  </span>
-                  <span className="flex-shrink-0 tabular-nums text-[10.5px] text-[var(--sb-text-faint)]">
-                    ({c.count})
-                  </span>
-                </div>
-
-                {cState.expanded && (
-                  <div className="ml-[27px]" style={{ borderLeft: `1px solid ${hairlineSoft}`, paddingLeft: 1 }}>
-                    {cState.municipalities === null && (
-                      <div className="px-2 py-2 text-[11px] text-[var(--sb-text-faint)]">Loading…</div>
-                    )}
-                    {cState.municipalities?.length === 0 && (
-                      <div className="px-2 py-1 text-[11px] text-[var(--sb-text-faint)]">No municipalities.</div>
-                    )}
-                    {cState.municipalities?.map((m) => {
-                      const mState: MunicipalityState =
-                        cState.muniState[String(m.id)] ?? {
-                          data: m,
-                          checked: false,
-                          expanded: false,
-                          barangays: null,
-                          barangayState: {},
-                        };
-                      const mPartial = muniPartial(mState);
-                      return (
-                        <div key={m.id} className="mb-0.5">
-                          <div className="flex items-center gap-2 rounded-[9px] px-1.5 py-[5px] transition-colors duration-100 hover:bg-[var(--sb-hover)]">
-                            <button
-                              type="button"
-                              onClick={() => toggleMuniExpand(c, m)}
-                              disabled={cState.checked}
-                              className="flex h-[14px] w-[14px] flex-shrink-0 items-center justify-center text-[var(--sb-text-faint)] disabled:opacity-40"
-                            >
-                              {mState.expanded ? <Minus size={10} /> : <Plus size={10} />}
-                            </button>
-                            <TriCheckbox
-                              state={mState.checked || cState.checked ? "checked" : mPartial ? "partial" : "unchecked"}
-                              onChange={() => toggleMuniChecked(c, m)}
-                              disabled={cState.checked}
-                            />
-                            <Building2 size={12} className="flex-shrink-0 text-[var(--sb-text-faint)]" />
-                            <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-[var(--sb-text)]">
-                              {m.label}
-                            </span>
-                            <span className="flex-shrink-0 tabular-nums text-[10px] text-[var(--sb-text-faint)]">
-                              ({m.count})
-                            </span>
-                          </div>
-
-                          {mState.expanded && !cState.checked && (
-                            <div className="ml-[24px]" style={{ borderLeft: `1px solid ${hairlineSoft}`, paddingLeft: 1 }}>
-                              {mState.barangays === null && (
-                                <div className="px-2 py-1.5 text-[10.5px] text-[var(--sb-text-faint)]">Loading…</div>
-                              )}
-                              {mState.barangays?.length === 0 && (
-                                <div className="px-2 py-1 text-[10.5px] text-[var(--sb-text-faint)]">
-                                  No barangays.
-                                </div>
-                              )}
-                              {mState.barangays?.map((b) => {
-                                const bState: BarangayState =
-                                  mState.barangayState[String(b.id)] ?? {
-                                    data: b,
-                                    checked: false,
-                                    expanded: false,
-                                    years: null,
-                                    yearChecked: {},
-                                  };
-                                const bPartial = barangayPartial(bState);
-                                const parentChecked = cState.checked || mState.checked;
-                                return (
-                                  <div key={b.id} className="mb-0.5">
-                                    <div className="flex items-center gap-2 rounded-[8px] px-1.5 py-[4px] transition-colors duration-100 hover:bg-[var(--sb-hover)]">
-                                      <button
-                                        type="button"
-                                        onClick={() => toggleBrgyExpand(c, m, b)}
-                                        disabled={parentChecked}
-                                        className="flex h-[13px] w-[13px] flex-shrink-0 items-center justify-center text-[var(--sb-text-faint)] disabled:opacity-40"
-                                      >
-                                        {bState.expanded ? <Minus size={9} /> : <Plus size={9} />}
-                                      </button>
-                                      <TriCheckbox
-                                        state={
-                                          bState.checked || parentChecked
-                                            ? "checked"
-                                            : bPartial
-                                            ? "partial"
-                                            : "unchecked"
-                                        }
-                                        onChange={() => toggleBrgyChecked(c, m, b)}
-                                        disabled={parentChecked}
-                                      />
-                                      <MapPin size={11} className="flex-shrink-0 text-[var(--sb-text-faint)]" />
-                                      <span className="min-w-0 flex-1 truncate text-[11.5px] font-medium text-[var(--sb-text)]">
-                                        {b.label}
-                                      </span>
-                                      <span className="flex-shrink-0 tabular-nums text-[10px] text-[var(--sb-text-faint)]">
-                                        ({b.count})
-                                      </span>
-                                    </div>
-
-                                    {bState.expanded && !parentChecked && (
-                                      <div
-                                        className="ml-[22px]"
-                                        style={{ borderLeft: `1px solid ${hairlineSoft}`, paddingLeft: 1 }}
-                                      >
-                                        {bState.years === null && (
-                                          <div className="px-2 py-1.5 text-[10.5px] text-[var(--sb-text-faint)]">
-                                            Loading…
-                                          </div>
-                                        )}
-                                        {bState.years?.length === 0 && (
-                                          <div className="px-2 py-1 text-[10.5px] text-[var(--sb-text-faint)]">
-                                            No surveyed years.
-                                          </div>
-                                        )}
-                                        {bState.years?.map((y) => (
-                                          <div
-                                            key={y.id}
-                                            className="flex items-center gap-2 rounded-[8px] px-1.5 py-[4px] transition-colors duration-100 hover:bg-[var(--sb-hover)]"
-                                          >
-                                            <TriCheckbox
-                                              state={
-                                                bState.checked || !!bState.yearChecked[String(y.id)]
-                                                  ? "checked"
-                                                  : "unchecked"
-                                              }
-                                              onChange={() => toggleYearChecked(c, m, b, y)}
-                                              disabled={bState.checked}
-                                            />
-                                            <CalendarDays size={11} className="flex-shrink-0 text-[var(--sb-text-faint)]" />
-                                            <span className="min-w-0 flex-1 truncate text-[11.5px] text-[var(--sb-text)]">
-                                              {y.label}
-                                            </span>
-                                            <span className="flex-shrink-0 tabular-nums text-[10px] text-[var(--sb-text-faint)]">
-                                              ({y.count})
-                                            </span>
-                                          </div>
-                                        ))}
-                                      </div>
-                                    )}
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
+              <div
+                key={item.id}
+                onClick={() => toggleItem(activeTab, item)}
+                className="mb-0.5 flex cursor-pointer items-center gap-2 rounded-[9px] px-1.5 py-[7px] transition-colors duration-100 hover:bg-[var(--sb-hover)]"
+              >
+                <ItemCheckbox checked={checked} onChange={() => toggleItem(activeTab, item)} />
+                <Icon size={13} className="flex-shrink-0 text-[var(--sb-text-faint)]" />
+                <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-[var(--sb-text)]">
+                  {item.label}
+                </span>
+                <span className="flex-shrink-0 tabular-nums text-[10.5px] text-[var(--sb-text-faint)]">
+                  ({item.count})
+                </span>
               </div>
             );
           })}
         </div>
 
-        <div className="flex flex-shrink-0 items-center gap-2 px-4 py-3" style={{ borderTop: `1px solid ${hairline}` }}>
-          <span className="text-[11.5px] text-[var(--sb-text-faint)]">
-            {totalSelectedCount} {totalSelectedCount === 1 ? "selection" : "selections"} picked
+        {/* Footer — stacks vertically on narrow screens so three actions
+            (Cancel / Generate Report / Project) never fight for space on a
+            phone-width dialog. */}
+        <div className="flex flex-shrink-0 flex-col gap-2 px-3 py-3 sm:px-4" style={{ borderTop: `1px solid ${hairline}` }}>
+          <span className="truncate text-[11px] text-[var(--sb-text-faint)]" title={filterLabel}>
+            {filterLabel}
           </span>
-          <div className="ml-auto flex items-center gap-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-full border-0 bg-[var(--sb-hover)] px-3 py-[7px] text-[11.5px] font-semibold text-[var(--sb-text-muted)] transition-opacity duration-100 hover:opacity-80"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={handleApply}
-              disabled={totalSelectedCount === 0}
-              className="rounded-full border-0 px-3.5 py-[7px] text-[11.5px] font-semibold text-white transition-opacity duration-100 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-              style={{ background: theme.accent }}
-            >
-              Project{totalSelectedCount > 0 ? ` (${totalSelectedCount})` : ""}
-            </button>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <span className="text-[11.5px] text-[var(--sb-text-faint)]">
+              {totalSelectedCount} {pluralize(totalSelectedCount, "filter", "filters")} checked
+            </span>
+            <div className="flex items-center gap-2 sm:ml-auto">
+              <button
+                type="button"
+                onClick={onClose}
+                className="flex-1 rounded-full border-0 bg-[var(--sb-hover)] px-3 py-[7px] text-[11.5px] font-semibold text-[var(--sb-text-muted)] transition-opacity duration-100 hover:opacity-80 sm:flex-none"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleGenerateReport}
+                disabled={totalSelectedCount === 0}
+                className="flex flex-1 items-center justify-center gap-1.5 rounded-full border-0 bg-[var(--sb-hover)] px-3 py-[7px] text-[11.5px] font-semibold text-[var(--sb-text)] transition-opacity duration-100 hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-40 sm:flex-none sm:px-3.5"
+              >
+                <FileText size={12} className="flex-shrink-0" />
+                <span className="hidden sm:inline">Generate </span>
+                <span>Report</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleApply}
+                disabled={totalSelectedCount === 0}
+                className="flex-1 rounded-full border-0 px-3 py-[7px] text-[11.5px] font-semibold text-white transition-opacity duration-100 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 sm:flex-none sm:px-3.5"
+                style={{ background: theme.accent }}
+              >
+                Project
+              </button>
+            </div>
           </div>
         </div>
       </div>

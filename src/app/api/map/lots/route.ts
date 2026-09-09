@@ -1,41 +1,49 @@
 // Target path: src/app/api/map/lots/route.ts
 //
-// CENRO FILTER (this pass): added `cenro_id` as a new selection mode, for
-// ProjectionModal's whole-CENRO pick (`proj:cenro:<id>`, see
-// ProjectionModal.tsx). Lots don't carry a cenro_id column themselves — a
-// lot's CENRO is derived through its municipality — so this filters via a
-// subquery against `municipalities.cenro_id` rather than a join, same
-// pattern as the existing municipality_id branch just one level up.
+// COMBINED FACET FILTER (this pass): ProjectionModal.tsx no longer produces
+// one pick per checkbox (proj:cenro:<id>, proj:muni:<id>, year:<b>:<y>,
+// etc). It's 4 flat tabs (CENRO / Municipality / Barangay / Year) with
+// cross-filtering between them, and one "Apply" now builds ONE combined
+// filter-set across everything checked in all 4 tabs, ANDed together:
+//   cenro IN (...) AND municipality IN (...) AND barangay IN (...) AND year IN (...)
+// (any facet the user left empty is just omitted from the AND). This is
+// also the shape a future Excel export / printable report will reuse
+// directly against this same endpoint.
 //
-// DOCUMENTS URL + SURVEY CLASS FIX (earlier pass): the SELECT below was
-// missing ls.documents_url and ls.survey_class entirely, so every feature
-// returned by this endpoint always had properties.documentsUrl and
-// properties.surveyClass as undefined — regardless of what was actually
-// saved in lot_sheets. AttributeTable's inline "Add link" (Documents) and
-// "Set class" controls call the PATCH route in
-// src/app/api/lot-sheets/[id]/route.ts, which DOES write documents_url /
-// survey_class correctly, and page.tsx's handlers optimistically patch
-// those fields onto in-memory features on success — so it looked like it
-// was working right up until a refresh (or re-toggling the layer) forced
-// a refetch through THIS route, at which point the freshly-saved values
-// vanished because they were never being selected in the first place.
-// Fixed by adding ls.documents_url and ls.survey_class to the SELECT and
-// mapping them to properties.documentsUrl / properties.surveyClass below,
-// same pattern as the existing ls.plan_url -> properties.planUrl.
+// New params, all comma-separated integers, all optional and combinable:
+//   &cenro_ids=1,2            (lots whose municipality falls under any of these CENROs)
+//   &municipality_ids=5,9
+//   &barangay_ids=12,40
+//   &years=2023,2024
+// If ANY of these four params is present (even a single id), the request
+// is treated as a facet-filter request and the legacy single-select modes
+// below (id / sheet_id / single cenro_id / single municipality_id / single
+// barangay_id[+year] / surveyor_id) are skipped entirely -- the two modes
+// are mutually exclusive per request, same as the legacy modes always were
+// exclusive of each other.
+//
+// The legacy singular modes are UNCHANGED and still used by: single-lot
+// fetch from search select (`id`), a specific sheet (`sheet_id`), and
+// per-surveyor lookups (`surveyor_id`). Sidebar.tsx's own Layers-tab tree
+// still uses the legacy `barangay_id[&year]` single-select path too --
+// that tree is a separate, simpler "browse and check one year" flow and
+// wasn't part of this pass.
 //
 // Feeds the map: returns a GeoJSON FeatureCollection for whichever selection
 // the sidebar (or search) has picked. Queries against the PostGIS `geom`
 // column (GIST indexed), not the raw `geojson` JSONB, so this stays fast as
 // the table grows.
 //
-// Usage (exactly one of these selection modes):
-//   /api/map/lots?id=983                     (single lot — used by search select)
-//   /api/map/lots?cenro_id=2                  (whole CENRO, all municipalities)
-//   /api/map/lots?municipality_id=5
-//   /api/map/lots?barangay_id=12              (whole barangay, all years)
-//   /api/map/lots?barangay_id=12&year=2025    (one year within a barangay)
-//   /api/map/lots?sheet_id=42                 (one specific sheet)
-//   /api/map/lots?surveyor_id=7                (everything by one surveyor)
+// Usage:
+//   /api/map/lots?id=983                              (single lot — search select)
+//   /api/map/lots?sheet_id=42                         (one specific sheet)
+//   /api/map/lots?surveyor_id=7                       (everything by one surveyor)
+//   /api/map/lots?cenro_id=2                          (legacy: whole CENRO, single)
+//   /api/map/lots?municipality_id=5                   (legacy: whole municipality, single)
+//   /api/map/lots?barangay_id=12                      (legacy: whole barangay, all years)
+//   /api/map/lots?barangay_id=12&year=2025            (legacy: one year within a barangay)
+//   /api/map/lots?cenro_ids=1,2&years=2023,2024       (combined facet filter — ProjectionModal)
+//   /api/map/lots?municipality_ids=5,9&barangay_ids=12&years=2024
 //
 // Optional, combinable with any of the above — restricts to the current map
 // viewport once a selection is large (e.g. "whole municipality"):
@@ -62,6 +70,16 @@
 // i.e. whoever encoded the SHEET this lot belongs to, not a per-lot value
 // (lots themselves don't carry their own created_by column). Every lot on
 // the same sheet will show the same encoder.
+//
+// properties.cenro / cenroId (added for the CENRO -> Municipality ->
+// Barangay -> Lot Sheet report, src/app/reports/lots): joined off
+// municipalities.cenro_id via the lot's own l.municipality_id — the exact
+// same column the cenro_ids facet filter below matches against — so the
+// CENRO shown on a lot is always consistent with what the CENRO filter
+// actually matched, even when the displayed province/municipality NAME
+// comes from control_points instead. Null if l.municipality_id is null
+// (a sheet located only via control_point, with no legacy per-lot
+// municipality FK set).
 import { NextResponse } from "next/server";
 import { getPool } from "@/lib/db";
 
@@ -77,6 +95,22 @@ function parsePositiveInt(value: string | null): number | null {
   return Number.isSafeInteger(n) && n > 0 ? n : null;
 }
 
+// Parses a comma-separated list of positive integers for the new combined
+// facet-filter params (cenro_ids, municipality_ids, barangay_ids, years).
+// A missing param yields an empty array (== "no filter on this facet");
+// a present-but-malformed entry yields null so the caller can 400 instead
+// of silently ignoring a typo'd filter.
+function parsePositiveIntList(value: string | null): number[] | null {
+  if (value == null || value.trim() === "") return [];
+  const out: number[] = [];
+  for (const part of value.split(",")) {
+    const n = parsePositiveInt(part.trim());
+    if (n == null) return null;
+    out.push(n);
+  }
+  return out;
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const idRaw = searchParams.get("id");
@@ -88,34 +122,26 @@ export async function GET(request: Request) {
   const yearRaw = searchParams.get("year");
   const bbox = searchParams.get("bbox");
 
-  // Reject anything that was actually supplied but doesn't parse as a
-  // positive integer, rather than silently falling through to "no filter
-  // matched" (which would return the unhelpful generic 400 below and mask
-  // what actually went wrong).
-  const idParams: [string, string | null][] = [
-    ["id", idRaw],
-    ["sheet_id", sheetIdRaw],
-    ["barangay_id", barangayIdRaw],
-    ["municipality_id", municipalityIdRaw],
-    ["cenro_id", cenroIdRaw],
-    ["surveyor_id", surveyorIdRaw],
-  ];
-  for (const [name, raw] of idParams) {
-    if (raw != null && parsePositiveInt(raw) == null) {
-      return NextResponse.json({ error: `${name} must be a positive integer.` }, { status: 400 });
-    }
-  }
-  if (yearRaw != null && !/^\d{4}$/.test(yearRaw)) {
-    return NextResponse.json({ error: "year must be a 4-digit year." }, { status: 400 });
+  // New combined facet-filter params (ProjectionModal's saved filter-sets).
+  const cenroIdsRaw = searchParams.get("cenro_ids");
+  const municipalityIdsRaw = searchParams.get("municipality_ids");
+  const barangayIdsRaw = searchParams.get("barangay_ids");
+  const yearsRaw = searchParams.get("years");
+
+  const cenroIds = parsePositiveIntList(cenroIdsRaw);
+  const municipalityIds = parsePositiveIntList(municipalityIdsRaw);
+  const barangayIds = parsePositiveIntList(barangayIdsRaw);
+  const years = parsePositiveIntList(yearsRaw);
+
+  if (cenroIds == null || municipalityIds == null || barangayIds == null || years == null) {
+    return NextResponse.json(
+      { error: "cenro_ids, municipality_ids, barangay_ids, and years must be comma-separated positive integers." },
+      { status: 400 }
+    );
   }
 
-  const id = parsePositiveInt(idRaw);
-  const sheetId = parsePositiveInt(sheetIdRaw);
-  const barangayId = parsePositiveInt(barangayIdRaw);
-  const municipalityId = parsePositiveInt(municipalityIdRaw);
-  const cenroId = parsePositiveInt(cenroIdRaw);
-  const surveyorId = parsePositiveInt(surveyorIdRaw);
-  const year = yearRaw != null ? Number(yearRaw) : null;
+  const hasFacetFilter =
+    cenroIds.length > 0 || municipalityIds.length > 0 || barangayIds.length > 0 || years.length > 0;
 
   const conditions: string[] = ["l.geom IS NOT NULL"];
   const params: unknown[] = [];
@@ -125,40 +151,82 @@ export async function GET(request: Request) {
     return `$${params.length}`;
   }
 
-  if (id != null) {
-    conditions.push(`l.id = ${addParam(id)}`);
-  } else if (sheetId != null) {
-    conditions.push(`l.lot_sheet_id = ${addParam(sheetId)}`);
-  } else if (barangayId != null && year != null) {
-    conditions.push(`l.barangay_id = ${addParam(barangayId)}`);
-    conditions.push(`EXTRACT(YEAR FROM l.date_surveyed) = ${addParam(year)}`);
-  } else if (barangayId != null) {
-    conditions.push(`l.barangay_id = ${addParam(barangayId)}`);
-  } else if (municipalityId != null) {
-    // NOTE: this still filters against the legacy l.municipality_id column.
-    // If/when the sidebar's municipality filter should instead mean "sheets
-    // tied to a control point in this municipality", this condition needs to
-    // change to join through lot_sheets/control_points too — flag if that's
-    // the intent.
-    conditions.push(`l.municipality_id = ${addParam(municipalityId)}`);
-  } else if (cenroId != null) {
-    // Whole-CENRO projection (proj:cenro:<id> from ProjectionModal): every
-    // lot whose municipality falls under this CENRO. A subquery, not a
-    // join, since no columns off `municipalities` are being projected here
-    // — same shape as the municipality_id branch above, one level up.
-    conditions.push(
-      `l.municipality_id IN (SELECT id FROM municipalities WHERE cenro_id = ${addParam(cenroId)})`
-    );
-  } else if (surveyorId != null) {
-    conditions.push(`l.surveyor_id = ${addParam(surveyorId)}`);
+  if (hasFacetFilter) {
+    // Combined mode: every non-empty facet ANDed together, each facet
+    // itself an OR/IN across whatever was checked in that tab.
+    if (cenroIds.length > 0) {
+      conditions.push(
+        `l.municipality_id IN (SELECT id FROM municipalities WHERE cenro_id = ANY(${addParam(cenroIds)}))`
+      );
+    }
+    if (municipalityIds.length > 0) {
+      conditions.push(`l.municipality_id = ANY(${addParam(municipalityIds)})`);
+    }
+    if (barangayIds.length > 0) {
+      conditions.push(`l.barangay_id = ANY(${addParam(barangayIds)})`);
+    }
+    if (years.length > 0) {
+      conditions.push(`EXTRACT(YEAR FROM l.date_surveyed) = ANY(${addParam(years)})`);
+    }
   } else {
-    return NextResponse.json(
-      {
-        error:
-          "Provide one of: id, sheet_id, barangay_id (optionally with year), municipality_id, cenro_id, or surveyor_id.",
-      },
-      { status: 400 }
-    );
+    // Legacy single-select modes — unchanged from before this pass.
+    const idParams: [string, string | null][] = [
+      ["id", idRaw],
+      ["sheet_id", sheetIdRaw],
+      ["barangay_id", barangayIdRaw],
+      ["municipality_id", municipalityIdRaw],
+      ["cenro_id", cenroIdRaw],
+      ["surveyor_id", surveyorIdRaw],
+    ];
+    for (const [name, raw] of idParams) {
+      if (raw != null && parsePositiveInt(raw) == null) {
+        return NextResponse.json({ error: `${name} must be a positive integer.` }, { status: 400 });
+      }
+    }
+    if (yearRaw != null && !/^\d{4}$/.test(yearRaw)) {
+      return NextResponse.json({ error: "year must be a 4-digit year." }, { status: 400 });
+    }
+
+    const id = parsePositiveInt(idRaw);
+    const sheetId = parsePositiveInt(sheetIdRaw);
+    const barangayId = parsePositiveInt(barangayIdRaw);
+    const municipalityId = parsePositiveInt(municipalityIdRaw);
+    const cenroId = parsePositiveInt(cenroIdRaw);
+    const surveyorId = parsePositiveInt(surveyorIdRaw);
+    const year = yearRaw != null ? Number(yearRaw) : null;
+
+    if (id != null) {
+      conditions.push(`l.id = ${addParam(id)}`);
+    } else if (sheetId != null) {
+      conditions.push(`l.lot_sheet_id = ${addParam(sheetId)}`);
+    } else if (barangayId != null && year != null) {
+      conditions.push(`l.barangay_id = ${addParam(barangayId)}`);
+      conditions.push(`EXTRACT(YEAR FROM l.date_surveyed) = ${addParam(year)}`);
+    } else if (barangayId != null) {
+      conditions.push(`l.barangay_id = ${addParam(barangayId)}`);
+    } else if (municipalityId != null) {
+      // NOTE: this still filters against the legacy l.municipality_id column.
+      // If/when the sidebar's municipality filter should instead mean "sheets
+      // tied to a control point in this municipality", this condition needs to
+      // change to join through lot_sheets/control_points too — flag if that's
+      // the intent.
+      conditions.push(`l.municipality_id = ${addParam(municipalityId)}`);
+    } else if (cenroId != null) {
+      conditions.push(
+        `l.municipality_id IN (SELECT id FROM municipalities WHERE cenro_id = ${addParam(cenroId)})`
+      );
+    } else if (surveyorId != null) {
+      conditions.push(`l.surveyor_id = ${addParam(surveyorId)}`);
+    } else {
+      return NextResponse.json(
+        {
+          error:
+            "Provide one of: id, sheet_id, barangay_id (optionally with year), municipality_id, cenro_id, surveyor_id, " +
+            "or a combined facet filter (cenro_ids/municipality_ids/barangay_ids/years).",
+        },
+        { status: 400 }
+      );
+    }
   }
 
   if (bbox) {
@@ -190,12 +258,15 @@ export async function GET(request: Request) {
       COALESCE(cp.municipality_name, m.name) AS municipality_name,
       b.name AS barangay_name,
       s.name AS surveyor_name,
-      eu.username AS encoded_by_username
+      eu.username AS encoded_by_username,
+      cen.id AS cenro_id,
+      cen.name AS cenro_name
     FROM lots l
     LEFT JOIN lot_sheets ls ON ls.id = l.lot_sheet_id
     LEFT JOIN control_points cp ON cp.id = ls.control_point_id
     LEFT JOIN provinces p ON p.id = l.province_id
     LEFT JOIN municipalities m ON m.id = l.municipality_id
+    LEFT JOIN cenros cen ON cen.id = m.cenro_id
     LEFT JOIN barangays b ON b.id = l.barangay_id
     LEFT JOIN surveyors s ON s.id = l.surveyor_id
     LEFT JOIN users eu ON eu.id = ls.created_by
@@ -234,6 +305,8 @@ export async function GET(request: Request) {
       documentsUrl: row.documents_url,
       surveyClass: row.survey_class,
       encodedBy: row.encoded_by_username,
+      cenroId: row.cenro_id,
+      cenro: row.cenro_name,
     },
   }));
 
