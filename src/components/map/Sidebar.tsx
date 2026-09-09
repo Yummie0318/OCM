@@ -2,7 +2,42 @@
 
 // Target path: src/components/map/Sidebar.tsx
 //
-// DOWNLOAD LAYER (this pass): added a Download icon button to each row in
+// MUNICIPALITY CHECKBOX PROJECTION (this pass): added a small checkbox
+// right after the +/- expand icon on each MunicipalityNode row (see the
+// new `showCheckbox`/`checked`/`onCheckToggle` props on FolderRow). This
+// is a shortcut for "project this whole municipality" without opening
+// ProjectionModal or drilling into barangays/years one at a time.
+//
+// It revives the `proj:muni:<id>` key shape that SelectedPanel already had
+// icon-handling for (see isProjMuni below) but that nothing was actually
+// producing anymore once ProjectionModal moved to its combined multi-facet
+// `filter:<timestamp>:<random>` keys. Checking the box calls the same
+// `onToggle` prop as everything else in this tree:
+//
+//   onToggle(`proj:muni:${node.id}`, {
+//     query: { municipality_id: node.id },
+//     label: "<Municipality> (all barangays, all years)",
+//   })
+//
+// map/page.tsx's generic activeSelections fetch effect picks this up like
+// any other selection, serializes `{ municipality_id }` into
+// `?municipality_id=<id>`, and hits /api/map/lots — which already has a
+// legacy branch for a bare `municipality_id` param, returning every lot
+// under that municipality regardless of barangay/year. Unchecking (or
+// hitting the X on the row in the Selected tab) calls
+// onToggle(key, null), same teardown path as every other selection.
+//
+// Clicking the checkbox stops propagation so it doesn't also trigger the
+// row's onToggle (which expands/collapses the barangay branch) — expanding
+// the tree and projecting the whole municipality are independent actions.
+//
+// A municipality can have a lot of lots — /api/map/lots caps results at
+// MAX_FEATURES (2000) and flags `truncated: true` past that, which the
+// map page already surfaces as a warning banner, so a very large
+// municipality just shows that same "narrow your selection" notice
+// instead of silently dropping data.
+//
+// DOWNLOAD LAYER (earlier pass): added a Download icon button to each row in
 // the "Selected" tab (SelectedPanel), alongside the existing view-in-table
 // (Table2) and remove (X) actions. Clicking it calls the new
 // `onDownloadLayer(key)` prop — Sidebar itself has no access to a layer's
@@ -244,7 +279,9 @@ function Skeleton({ width }: { width: number | string }) {
 // Small custom checkbox — a real <input type="checkbox"> kept for a11y and
 // keyboard support, visually replaced with a rounded box + check glyph so
 // it matches the rest of the chrome instead of the browser's default skin.
-// Same visual language as AttributeTable's row-selection checkbox.
+// Same visual language as AttributeTable's row-selection checkbox. Reused
+// both by YearRow and by FolderRow's new municipality-level projection
+// checkbox.
 function Checkbox({ checked, onChange }: { checked: boolean; onChange: () => void }) {
   return (
     <span className="relative inline-flex h-[15px] w-[15px] flex-shrink-0 items-center justify-center">
@@ -816,9 +853,10 @@ function TabButton({
 // ProjectionModal for a bulk-picked year), "Owner · Lot No" for a picked
 // search result (built in handleSearchSelect in map/page.tsx), or
 // "Municipality (all barangays, all years)" / "Municipality, Barangay (all
-// years)" for a whole-municipality/whole-barangay projection (built in
-// ProjectionModal.tsx) — so rows wrap to two lines instead of truncating
-// to one, with the full text still available via the tooltip.
+// years)" for a whole-municipality/whole-barangay projection (built here in
+// MunicipalityNode, or by ProjectionModal) — so rows wrap to two lines
+// instead of truncating to one, with the full text still available via the
+// tooltip.
 //
 // Each row now carries four actions: download, view-in-table (Table2), and
 // remove (X). The row currently driving the attribute table (activeTableKey
@@ -889,11 +927,12 @@ function SelectedPanel({
           // A search-result pick (see handleSearchSelect in map/page.tsx)
           // is keyed `search:<id>`, a notification-bell pick (see
           // handleActivityLogSelect in map/page.tsx) is keyed `sheet:<id>`,
-          // and a bulk projection pick (see ProjectionModal.tsx) is keyed
-          // `proj:muni:<id>` (whole municipality) or `proj:brgy:<id>`
-          // (whole barangay) — all distinct from a single year layer's
-          // `year:<barangayId>:<yearId>` key. Swap the leading icon so
-          // every kind of row reads differently at a glance.
+          // and a whole-municipality/barangay projection (see
+          // MunicipalityNode's checkbox below, or ProjectionModal.tsx) is
+          // keyed `proj:muni:<id>` or `proj:brgy:<id>` — all distinct from
+          // an ordinary single year layer's `year:<barangayId>:<yearId>`
+          // key. Swap the leading icon so every kind of row reads
+          // differently at a glance.
           const isSearchResult = key.startsWith("search:");
           const isSheetFromLog = key.startsWith("sheet:");
           const isProjMuni = key.startsWith("proj:muni:");
@@ -1050,7 +1089,12 @@ function LayersPanel({
   );
 }
 
-// ---------------- Folder row (Municipality / Barangay) — plus/minus, no checkbox ----------------
+// ---------------- Folder row (Municipality / Barangay) ----------------
+//
+// Renders the +/- expand toggle, an optional checkbox right after it (used
+// by MunicipalityNode for the "project this whole municipality" shortcut
+// added in this pass — BarangayNode doesn't pass showCheckbox, so its rows
+// are unaffected), the branch icon, label, and count.
 
 function FolderRow({
   expanded,
@@ -1059,6 +1103,9 @@ function FolderRow({
   label,
   count,
   active,
+  showCheckbox = false,
+  checked = false,
+  onCheckToggle,
 }: {
   expanded: boolean;
   onToggle: () => void;
@@ -1066,6 +1113,11 @@ function FolderRow({
   label: string;
   count: number;
   active: boolean;
+  /** Renders a small checkbox right after the +/- icon — used for
+   *  "project this whole municipality" without expanding the tree. */
+  showCheckbox?: boolean;
+  checked?: boolean;
+  onCheckToggle?: () => void;
 }) {
   return (
     <div
@@ -1080,6 +1132,15 @@ function FolderRow({
       >
         {expanded ? <Minus size={11} /> : <Plus size={11} />}
       </span>
+      {showCheckbox && (
+        // stopPropagation so clicking the checkbox doesn't also fire the
+        // row's onToggle (which expands/collapses the branch) — checking
+        // the box to project the whole municipality and expanding the
+        // tree to drill into barangays/years are independent actions.
+        <span onClick={(e) => e.stopPropagation()}>
+          <Checkbox checked={checked} onChange={() => onCheckToggle?.()} />
+        </span>
+      )}
       <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center">{icon}</span>
       <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-[var(--sb-text)]">
         {label || "Untitled"}
@@ -1181,9 +1242,37 @@ function MunicipalityNode({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshKey]);
 
-  const hasActive = Object.keys(activeSelections).some(
+  const hasActiveYear = Object.keys(activeSelections).some(
     (k) => k.startsWith("year:") && activeSelections[k].query.municipality_id === node.id
   );
+
+  // Deterministic key so checking/unchecking the box is a plain lookup —
+  // same style as a year layer's `year:<barangayId>:<yearId>` key. This
+  // revives the `proj:muni:<id>` shape SelectedPanel already special-cases
+  // with a Building2 icon (see isProjMuni there); nothing was actually
+  // producing it anymore since ProjectionModal moved to its own combined
+  // `filter:<timestamp>:<random>` keys for multi-facet picks. This
+  // checkbox is the simpler "just grab this whole municipality" shortcut.
+  //
+  // query: { municipality_id: node.id } matches the legacy single-select
+  // branch in /api/map/lots (see its own file-top usage examples), and is
+  // exactly what map/page.tsx's generic activeSelections fetch effect will
+  // serialize into `?municipality_id=<id>` the moment this key appears.
+  const projKey = `proj:muni:${node.id}`;
+  const projChecked = !!activeSelections[projKey];
+
+  function handleProjectToggle() {
+    if (projChecked) {
+      onToggle(projKey, null);
+    } else {
+      onToggle(projKey, {
+        query: { municipality_id: node.id },
+        label: `${node.label} (all barangays, all years)`,
+      });
+    }
+  }
+
+  const hasActive = hasActiveYear || projChecked;
 
   return (
     <div>
@@ -1194,6 +1283,9 @@ function MunicipalityNode({
         label={String(node.label)}
         count={node.count}
         active={hasActive}
+        showCheckbox
+        checked={projChecked}
+        onCheckToggle={handleProjectToggle}
       />
       {expanded && (
         <div className="ml-[25px]" style={{ borderLeft: `1px solid ${hairlineSoft}`, paddingLeft: 1 }}>
@@ -1267,7 +1359,32 @@ function BarangayNode({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshKey]);
 
-  const hasActive = Object.keys(activeSelections).some((k) => k.startsWith(`year:${node.id}:`));
+  const hasActiveYear = Object.keys(activeSelections).some((k) => k.startsWith(`year:${node.id}:`));
+
+  // Same shortcut as MunicipalityNode's checkbox, one level down: projects
+  // every lot in this barangay regardless of year, without drilling into
+  // the year list below. Revives the `proj:brgy:<id>` key shape
+  // SelectedPanel already special-cases with a MapPin icon (see isProjBrgy
+  // there). query: { barangay_id: node.id } matches the legacy
+  // barangay_id-only branch in /api/map/lots (i.e. the same as
+  // `barangay_id` with no `year`), so map/page.tsx's generic
+  // activeSelections fetch effect just serializes this straight into
+  // `?barangay_id=<id>` with no extra wiring needed.
+  const projKey = `proj:brgy:${node.id}`;
+  const projChecked = !!activeSelections[projKey];
+
+  function handleProjectToggle() {
+    if (projChecked) {
+      onToggle(projKey, null);
+    } else {
+      onToggle(projKey, {
+        query: { barangay_id: node.id },
+        label: `${municipalityLabel}, ${node.label} (all years)`,
+      });
+    }
+  }
+
+  const hasActive = hasActiveYear || projChecked;
 
   return (
     <div>
@@ -1278,6 +1395,9 @@ function BarangayNode({
         label={String(node.label)}
         count={node.count}
         active={hasActive}
+        showCheckbox
+        checked={projChecked}
+        onCheckToggle={handleProjectToggle}
       />
       {expanded && (
         <div className="ml-[25px]" style={{ borderLeft: `1px solid ${hairlineSoft}`, paddingLeft: 1 }}>
