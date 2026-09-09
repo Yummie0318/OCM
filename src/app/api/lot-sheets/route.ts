@@ -1,21 +1,28 @@
 // Target path in your project: src/app/api/lot-sheets/route.ts
 //
 // DB MIGRATION REQUIRED (run once against your database before this goes
-// live) — enforces "no duplicate lot number" at the DB level as a backstop
-// against the two racing requests scenario, which no amount of
-// pre-INSERT SELECT checking alone can fully close:
+// live) — enforces "no duplicate Lot No. + Owner" at the DB level as a
+// backstop against the two racing requests scenario, which no amount of
+// pre-INSERT SELECT checking alone can fully close.
 //
-//   ALTER TABLE lots ADD CONSTRAINT lots_lot_no_unique UNIQUE (lot_no);
+// Same lot_no with a DIFFERENT owner is allowed (e.g. a lot legitimately
+// re-subdivided/re-surveyed under a new owner) — only lot_no + owner
+// TOGETHER must be unique. A plain UNIQUE constraint does exact byte
+// comparison (case/whitespace sensitive), which doesn't match the
+// case-insensitive/trimmed comparison used in the app-level check below,
+// so this uses a case-insensitive expression index instead:
 //
-// NOTE: this makes lot_no unique across the ENTIRE table. If lot numbers are
-// only meant to be unique within a barangay/sheet (i.e. the same lot_no is
-// allowed to legitimately repeat elsewhere), use a composite constraint
-// instead, e.g.:
+//   CREATE UNIQUE INDEX lots_lot_no_owner_unique_idx
+//     ON lots (lot_no, LOWER(TRIM(owner_given_name)), LOWER(TRIM(owner_surname)));
 //
-//   ALTER TABLE lots ADD CONSTRAINT lots_lot_no_unique UNIQUE (lot_no, barangay_id);
+// NOTE: if lot numbers + owner are only meant to be unique within a
+// barangay/sheet (i.e. the same lot_no + owner is allowed to legitimately
+// repeat elsewhere), add barangay_id into the index instead, e.g.:
 //
-// and change the two lot_no checks below (the pre-check SELECT and the
-// duplicates array) to match on the same combination of columns.
+//   CREATE UNIQUE INDEX lots_lot_no_owner_unique_idx
+//     ON lots (lot_no, LOWER(TRIM(owner_given_name)), LOWER(TRIM(owner_surname)), barangay_id);
+//
+// and add barangayId into the ownerKey-based checks below to match.
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { getPool } from "@/lib/db";
@@ -59,6 +66,16 @@ interface LotSheetInput {
 // (CHECK (survey_class IN ('admin', 'private'))).
 const SURVEY_CLASSES = ["admin", "private"] as const;
 
+// "Same owner" is judged on trimmed, case-insensitive given+surname, so
+// "Juan " / "juan" / "JUAN" all count as the same given name. Used to
+// build a comparison key for both the in-batch check and the DB check
+// below, so the two stay consistent with each other.
+function ownerKey(givenName: string | null | undefined, surname: string | null | undefined): string {
+  const g = (givenName ?? "").trim().toLowerCase();
+  const s = (surname ?? "").trim().toLowerCase();
+  return `${g}|${s}`;
+}
+
 export async function POST(request: Request) {
   // Who's making this request. middleware.ts already requires a valid
   // session cookie to reach this route at all (it's not in PUBLIC_PATHS),
@@ -97,20 +114,23 @@ export async function POST(request: Request) {
     );
   }
 
-  // --- Duplicate check #1: same lot_no repeated within THIS submission ---
+  // --- Duplicate check #1: same Lot No. + same Owner repeated within THIS submission ---
   // Checked before touching the DB at all, since the DB-side check below
-  // only sees rows already saved — two lots with the same lot_no in one
-  // request would both pass that check and both get inserted otherwise.
+  // only sees rows already saved — two lots with the same lot_no + owner
+  // in one request would both pass that check and both get inserted
+  // otherwise. Same lot_no with a DIFFERENT owner is fine and does not
+  // trigger this.
   const seenInBatch = new Set<string>();
   const inBatchDuplicates: string[] = [];
   for (const lot of body.lots) {
-    if (seenInBatch.has(lot.lotNo)) inBatchDuplicates.push(lot.lotNo);
-    seenInBatch.add(lot.lotNo);
+    const key = `${lot.lotNo}|${ownerKey(lot.ownerGivenName, lot.ownerSurname)}`;
+    if (seenInBatch.has(key)) inBatchDuplicates.push(lot.lotNo);
+    seenInBatch.add(key);
   }
   if (inBatchDuplicates.length > 0) {
     return NextResponse.json(
       {
-        error: "Duplicate Lot No. within the submitted sheet.",
+        error: "Duplicate Lot No. + Owner within the submitted sheet.",
         duplicates: inBatchDuplicates,
       },
       { status: 409 }
@@ -121,21 +141,37 @@ export async function POST(request: Request) {
   const client = await pool.connect();
 
   try {
-    // --- Duplicate check #2: same lot_no already saved in the database ---
-    // Lot numbers must be unique on their own now (previously this only
-    // flagged a duplicate when BOTH lot_no and survey_no matched).
+    // --- Duplicate check #2: same Lot No. + same Owner already saved in the database ---
+    // If the lot_no exists but belongs to a DIFFERENT owner, that's not a
+    // duplicate — it's allowed through. Only lot_no + owner together
+    // (case-insensitive, trimmed) blocks the save. We pull back every row
+    // matching any of the submitted lot_nos, then compare owners in JS
+    // using the same ownerKey used for the in-batch check above, so both
+    // checks apply identical normalization.
     const lotNos = body.lots.map((l) => l.lotNo);
 
     const dupCheck = await client.query(
-      `SELECT lot_no FROM lots WHERE lot_no = ANY($1::text[])`,
+      `SELECT lot_no, owner_given_name, owner_surname
+       FROM lots
+       WHERE lot_no = ANY($1::text[])`,
       [lotNos]
     );
 
-    if (dupCheck.rows.length > 0) {
+    const existingKeys = new Set(
+      dupCheck.rows.map(
+        (r) => `${r.lot_no}|${ownerKey(r.owner_given_name, r.owner_surname)}`
+      )
+    );
+
+    const dbDuplicates = body.lots.filter((lot) =>
+      existingKeys.has(`${lot.lotNo}|${ownerKey(lot.ownerGivenName, lot.ownerSurname)}`)
+    );
+
+    if (dbDuplicates.length > 0) {
       return NextResponse.json(
         {
-          error: "One or more lots already exist in the database (duplicate Lot No.).",
-          duplicates: dupCheck.rows.map((r) => ({ lotNo: r.lot_no })),
+          error: "One or more lots already exist in the database (same Lot No. and Owner).",
+          duplicates: dbDuplicates.map((l) => ({ lotNo: l.lotNo })),
         },
         { status: 409 }
       );
@@ -230,14 +266,26 @@ export async function POST(request: Request) {
   } catch (err: any) {
     await client.query("ROLLBACK").catch(() => {});
 
-    // Postgres unique_violation — the DB-level constraint (see migration
-    // note at the top of this file) caught a duplicate lot_no that slipped
-    // past the pre-check above, most likely two concurrent saves racing
-    // each other. Report it the same way as the pre-check instead of
-    // falling through to a generic 500.
+    // Postgres unique_violation — the DB-level index (see migration note
+    // at the top of this file) caught a duplicate Lot No. + Owner that
+    // slipped past the pre-check above, most likely two concurrent saves
+    // racing each other. Report it the same way as the pre-check instead
+    // of falling through to a generic 500.
+    //
+    // err.constraint holds the index/constraint name Postgres rejected
+    // against. Checked (rather than assuming every 23505 here is this
+    // index) so an unrelated unique violation elsewhere in the table
+    // still surfaces as a distinguishable message rather than being
+    // mislabeled as a Lot No. + Owner duplicate.
     if (err?.code === "23505") {
+      if (err?.constraint === "lots_lot_no_owner_unique_idx") {
+        return NextResponse.json(
+          { error: "One or more lots already exist in the database (same Lot No. and Owner)." },
+          { status: 409 }
+        );
+      }
       return NextResponse.json(
-        { error: "One or more lots already exist in the database (duplicate Lot No.)." },
+        { error: "A duplicate record was rejected by the database." },
         { status: 409 }
       );
     }
