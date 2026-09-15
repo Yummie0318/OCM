@@ -77,6 +77,10 @@ function Tooltip({
       onMouseLeave={() => setShow(false)}
       onFocus={() => setShow(true)}
       onBlur={() => setShow(false)}
+      onClick={(e) => {
+        e.stopPropagation();
+        setShow((s) => !s);
+      }}
     >
       {children}
       {show && (
@@ -115,6 +119,7 @@ export interface SheetPreviewRequest {
 
 interface Props {
   features: LotFeature[];
+  loading?: boolean;
   onRowClick?: (feature: LotFeature) => void;
   selectedId?: number | string | null;
   totalCount?: number;
@@ -517,6 +522,7 @@ function ColorToolbar({
 
 export default function AttributeTable({
   features,
+  loading,
   onRowClick,
   selectedId,
   totalCount,
@@ -663,17 +669,27 @@ export default function AttributeTable({
       <div className={`${uiFont.className} flex h-full flex-col bg-[var(--sb-bg)]`} style={vars}>
         {filterLabel && onClearFilter && <FilterChip label={filterLabel} onClear={onClearFilter} />}
         <div className="flex flex-1 flex-col items-center justify-center gap-1.5 px-4 text-center">
-          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--sb-hover)] text-[var(--sb-text-faint)]">
-            <Table2 size={14} />
-          </div>
-          <p className="text-[12.5px] font-medium text-[var(--sb-text)]">
-            {hasError ? "That selection failed to load." : "No lots to show yet"}
-          </p>
-          <p className="text-[11.5px] text-[var(--sb-text-faint)]">
-            {hasError
-              ? "Try toggling it off and on again in the sidebar."
-              : "Check a municipality, barangay, or year in the sidebar."}
-          </p>
+          {loading ? (
+            <>
+              <Loader2 size={16} className="animate-spin text-[var(--sb-text-faint)]" />
+              <p className="text-[12.5px] font-medium text-[var(--sb-text)]">Loading lots…</p>
+              <p className="text-[11.5px] text-[var(--sb-text-faint)]">This should only take a moment.</p>
+            </>
+          ) : (
+            <>
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--sb-hover)] text-[var(--sb-text-faint)]">
+                <Table2 size={14} />
+              </div>
+              <p className="text-[12.5px] font-medium text-[var(--sb-text)]">
+                {hasError ? "That selection failed to load." : "No lots to show yet"}
+              </p>
+              <p className="text-[11.5px] text-[var(--sb-text-faint)]">
+                {hasError
+                  ? "Try toggling it off and on again in the sidebar."
+                  : "Check a municipality, barangay, or year in the sidebar."}
+              </p>
+            </>
+          )}
         </div>
       </div>
     );
@@ -788,49 +804,76 @@ export default function AttributeTable({
         </div>
       )}
 
+      {/*
+        MOBILE PASS (scroll fix): previously this single div was
+        `overflow-auto`, scrolling BOTH axes, and its height equaled the
+        full rendered table (all rows), not the visible viewport. That
+        meant the horizontal scrollbar/drag-track only became reachable
+        once you'd scrolled all the way down to the bottom row — because
+        that's genuinely where the bottom edge of this element was.
+        SheetsTable/LotsTable also each wrapped their own <table> in a
+        second `overflow-x-auto` div, so there were two nested horizontal
+        scroll regions fighting each other.
+
+        Fix: this outer div now owns ONLY horizontal scroll, and is
+        pinned to the visible viewport height via `flex-1`/`min-h-0` from
+        the parent flex column. A new inner div owns ONLY vertical scroll
+        and is `h-full` (i.e. exactly the visible box, not the content
+        height). So the horizontal scroll region is always exactly as
+        tall as what's on screen — reachable from the top row, not just
+        the bottom — and vertical scrolling of rows still works
+        independently inside it. The redundant inner `overflow-x-auto`
+        wrappers were removed from SheetsTable and LotsTable below.
+      */}
       <div
-        className="min-h-0 flex-1 overflow-auto"
-        style={{
-          WebkitOverflowScrolling: "touch",
-          overscrollBehavior: "contain",
-        }}
+        className="min-h-0 flex-1 overflow-x-auto overflow-y-hidden"
+        style={{ WebkitOverflowScrolling: "touch", touchAction: "pan-x" }}
       >
-        {isSearching ? (
-          searchResults.lots.length === 0 ? (
-            <NoSearchResults query={searchQuery} />
-          ) : (
+        <div
+          className="h-full overflow-y-auto"
+          style={{
+            WebkitOverflowScrolling: "touch",
+            overscrollBehavior: "contain",
+            touchAction: "pan-y",
+          }}
+        >
+          {isSearching ? (
+            searchResults.lots.length === 0 ? (
+              <NoSearchResults query={searchQuery} />
+            ) : (
+              <LotsTable
+                features={searchResults.lots}
+                onRowClick={onRowClick}
+                selectedId={selectedId}
+                showSheetNo
+                lotColors={lotColors}
+                colorSelectedIds={colorSelectedIds}
+                onToggleColorSelect={toggleColorSelect}
+                onToggleColorSelectAll={() => toggleColorSelectAll(searchResults.lots)}
+              />
+            )
+          ) : expandedSheet ? (
             <LotsTable
-              features={searchResults.lots}
+              features={expandedSheet.lots}
               onRowClick={onRowClick}
               selectedId={selectedId}
-              showSheetNo
               lotColors={lotColors}
               colorSelectedIds={colorSelectedIds}
               onToggleColorSelect={toggleColorSelect}
-              onToggleColorSelectAll={() => toggleColorSelectAll(searchResults.lots)}
+              onToggleColorSelectAll={() => toggleColorSelectAll(expandedSheet.lots)}
             />
-          )
-        ) : expandedSheet ? (
-          <LotsTable
-            features={expandedSheet.lots}
-            onRowClick={onRowClick}
-            selectedId={selectedId}
-            lotColors={lotColors}
-            colorSelectedIds={colorSelectedIds}
-            onToggleColorSelect={toggleColorSelect}
-            onToggleColorSelectAll={() => toggleColorSelectAll(expandedSheet.lots)}
-          />
-        ) : (
-          <SheetsTable
-            groups={sheetGroups}
-            onOpenSheet={setExpandedSheetKey}
-            onViewSheet={onViewSheet}
-            onUpdatePlanUrl={onUpdatePlanUrl}
-            onUpdateSurveyNo={onUpdateSurveyNo}
-            onUpdateDocumentsUrl={onUpdateDocumentsUrl}
-            onUpdateSurveyClass={onUpdateSurveyClass}
-          />
-        )}
+          ) : (
+            <SheetsTable
+              groups={sheetGroups}
+              onOpenSheet={setExpandedSheetKey}
+              onViewSheet={onViewSheet}
+              onUpdatePlanUrl={onUpdatePlanUrl}
+              onUpdateSurveyNo={onUpdateSurveyNo}
+              onUpdateDocumentsUrl={onUpdateDocumentsUrl}
+              onUpdateSurveyClass={onUpdateSurveyClass}
+            />
+          )}
+        </div>
       </div>
     </div>
   );
@@ -889,152 +932,148 @@ function SheetsTable({
   onUpdateDocumentsUrl?: (sheetId: number, documentsUrl: string) => Promise<void>;
   onUpdateSurveyClass?: (sheetId: number, surveyClass: "admin" | "private") => Promise<void>;
 }) {
+  // MOBILE PASS (scroll fix): horizontal scrolling is now owned by the
+  // grandparent wrapper in AttributeTable, so this no longer wraps itself
+  // in its own `overflow-x-auto` div — that second scroll region was what
+  // pinned the scrollbar to the bottom of the full row list instead of
+  // the visible viewport. `min-w` on the table itself is unchanged and
+  // still what forces horizontal scroll to kick in on narrow screens.
   return (
-    // MOBILE PASS: this table has 10-11 columns and was already relying on
-    // the outer `.overflow-auto` wrapper in AttributeTable to scroll — that
-    // still works on touch devices, but wrapping it here in its own
-    // horizontally-scrollable region with `WebkitOverflowScrolling: touch`
-    // makes the scroll gesture feel native (momentum scrolling) instead of
-    // relying purely on the parent's overscroll behavior, and keeps sticky
-    // headers correctly pinned per-axis rather than fighting the row-list
-    // scroll below it.
-    <div className="w-full overflow-x-auto" style={{ WebkitOverflowScrolling: "touch" }}>
-      <table className="w-full min-w-[880px] border-collapse text-[11.5px]">
-        <thead>
-          <tr>
-            <Th>Sheet No.</Th>
-            <Th>Municipality</Th>
-            <Th>Province</Th>
-            <Th>Plan</Th>
-            <Th>Documents</Th>
-            <Th>Survey No.</Th>
-            <Th>Class</Th>
-            <Th numeric>Lots</Th>
-            <Th numeric>Total Area (sq.m.)</Th>
-            <Th>Encoded By</Th>
-            {onViewSheet && <Th>Preview</Th>}
-          </tr>
-        </thead>
-        <tbody>
-          {groups.map((g, i) => (
-            <tr
-              key={g.key}
-              onClick={() => onOpenSheet(g.key)}
-              title="Click to view lots"
-              className="cursor-pointer transition-colors duration-100"
-              style={{
-                borderBottom: `1px solid ${HAIRLINE_SOFT}`,
-                background: i % 2 === 1 ? "color-mix(in srgb, var(--sb-hover) 45%, transparent)" : "transparent",
-              }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = "var(--sb-hover)")}
-              onMouseLeave={(e) =>
-                (e.currentTarget.style.background =
-                  i % 2 === 1 ? "color-mix(in srgb, var(--sb-hover) 45%, transparent)" : "transparent")
-              }
-            >
-              <td className="px-2.5 py-[6px] font-medium text-[var(--sb-text)]">{g.sheetNo}</td>
-              <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{g.municipality || "—"}</td>
-              <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{g.province || "—"}</td>
-              <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]" onClick={(e) => e.stopPropagation()}>
-                {g.planUrl ? (
-                  <PlanLink url={g.planUrl} label="View" />
-                ) : g.sheetId != null && onUpdatePlanUrl ? (
-                  <InlineFieldControl
-                    sheetId={g.sheetId}
-                    kind="url"
-                    triggerLabel="Add link"
-                    tooltip="Add a Google Drive link to this sheet's plan"
-                    placeholder="Paste Google Drive link…"
-                    inputWidth={168}
-                    validate={(v) => (isTraceableGoogleDriveLink(v) ? null : PLAN_LINK_HELP_MESSAGE)}
-                    onSave={onUpdatePlanUrl}
-                  />
-                ) : (
-                  "—"
-                )}
-              </td>
-              <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]" onClick={(e) => e.stopPropagation()}>
-                {g.documentsUrl ? (
-                  <PlanLink url={g.documentsUrl} label="View" />
-                ) : g.sheetId != null && onUpdateDocumentsUrl ? (
-                  <InlineFieldControl
-                    sheetId={g.sheetId}
-                    kind="url"
-                    triggerLabel="Add link"
-                    tooltip="Add a Google Drive link to this sheet's documents"
-                    placeholder="Paste Google Drive link…"
-                    inputWidth={168}
-                    validate={(v) => (isTraceableGoogleDriveLink(v) ? null : PLAN_LINK_HELP_MESSAGE)}
-                    onSave={onUpdateDocumentsUrl}
-                  />
-                ) : (
-                  "—"
-                )}
-              </td>
-              <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]" onClick={(e) => e.stopPropagation()}>
-                <span className="inline-flex flex-wrap items-center gap-1.5">
-                  {g.surveyNo ? <span className="text-[var(--sb-text)]">{g.surveyNo}</span> : null}
-                  {!g.surveyNo && g.sheetId != null && onUpdateSurveyNo ? (
-                    <InlineFieldControl
-                      sheetId={g.sheetId}
-                      kind="text"
-                      triggerLabel="Add survey no."
-                      tooltip="Set survey number"
-                      placeholder="Survey number…"
-                      inputWidth={120}
-                      onSave={onUpdateSurveyNo}
-                    />
-                  ) : !g.surveyNo ? (
-                    "—"
-                  ) : null}
-                </span>
-              </td>
-              <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]" onClick={(e) => e.stopPropagation()}>
-                {g.surveyClass ? (
-                  <SurveyClassBadge value={g.surveyClass} />
-                ) : g.sheetId != null && onUpdateSurveyClass ? (
-                  <InlineFieldControl
-                    sheetId={g.sheetId}
-                    kind="select"
-                    triggerLabel="Set class"
-                    tooltip="Set this sheet's survey class (admin or private)"
-                    selectOptions={SURVEY_CLASS_OPTIONS}
-                    onSave={(sheetId, value) => onUpdateSurveyClass(sheetId, value as "admin" | "private")}
-                  />
-                ) : (
-                  "—"
-                )}
-              </td>
-              <td className="px-2.5 py-[6px] text-right tabular-nums text-[var(--sb-text-muted)]">{g.lots.length}</td>
-              <td className="px-2.5 py-[6px] text-right tabular-nums text-[var(--sb-text-muted)]">
-                {formatArea(g.totalArea)}
-              </td>
-              <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{g.encodedBy || "—"}</td>
-              {onViewSheet && (
-                <td className="px-2.5 py-[6px]" onClick={(e) => e.stopPropagation()}>
-                  <Tooltip label="Preview whole sheet — all lots + coordinates">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        onViewSheet({
-                          sheetNo: g.sheetNo,
-                          province: g.province,
-                          municipality: g.municipality,
-                          lots: g.lots,
-                        })
-                      }
-                      className="flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded-[7px] border-0 bg-[var(--sb-accent-bg)] p-0 text-[var(--sb-accent)] transition-colors duration-100 hover:opacity-75"
-                    >
-                      <Eye size={12} />
-                    </button>
-                  </Tooltip>
-                </td>
+    <table className="w-full min-w-[880px] border-collapse text-[11.5px]">
+      <thead>
+        <tr>
+          <Th>Sheet No.</Th>
+          <Th>Municipality</Th>
+          <Th>Province</Th>
+          <Th>Plan</Th>
+          <Th>Documents</Th>
+          <Th>Survey No.</Th>
+          <Th>Class</Th>
+          <Th numeric>Lots</Th>
+          <Th numeric>Total Area (sq.m.)</Th>
+          <Th>Encoded By</Th>
+          {onViewSheet && <Th>Preview</Th>}
+        </tr>
+      </thead>
+      <tbody>
+        {groups.map((g, i) => (
+          <tr
+            key={g.key}
+            onClick={() => onOpenSheet(g.key)}
+            title="Click to view lots"
+            className="cursor-pointer transition-colors duration-100"
+            style={{
+              borderBottom: `1px solid ${HAIRLINE_SOFT}`,
+              background: i % 2 === 1 ? "color-mix(in srgb, var(--sb-hover) 45%, transparent)" : "transparent",
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = "var(--sb-hover)")}
+            onMouseLeave={(e) =>
+              (e.currentTarget.style.background =
+                i % 2 === 1 ? "color-mix(in srgb, var(--sb-hover) 45%, transparent)" : "transparent")
+            }
+          >
+            <td className="px-2.5 py-[6px] font-medium text-[var(--sb-text)]">{g.sheetNo}</td>
+            <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{g.municipality || "—"}</td>
+            <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{g.province || "—"}</td>
+            <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]" onClick={(e) => e.stopPropagation()}>
+              {g.planUrl ? (
+                <PlanLink url={g.planUrl} label="View" />
+              ) : g.sheetId != null && onUpdatePlanUrl ? (
+                <InlineFieldControl
+                  sheetId={g.sheetId}
+                  kind="url"
+                  triggerLabel="Add link"
+                  tooltip="Add a Google Drive link to this sheet's plan"
+                  placeholder="Paste Google Drive link…"
+                  inputWidth={168}
+                  validate={(v) => (isTraceableGoogleDriveLink(v) ? null : PLAN_LINK_HELP_MESSAGE)}
+                  onSave={onUpdatePlanUrl}
+                />
+              ) : (
+                "—"
               )}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+            </td>
+            <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]" onClick={(e) => e.stopPropagation()}>
+              {g.documentsUrl ? (
+                <PlanLink url={g.documentsUrl} label="View" />
+              ) : g.sheetId != null && onUpdateDocumentsUrl ? (
+                <InlineFieldControl
+                  sheetId={g.sheetId}
+                  kind="url"
+                  triggerLabel="Add link"
+                  tooltip="Add a Google Drive link to this sheet's documents"
+                  placeholder="Paste Google Drive link…"
+                  inputWidth={168}
+                  validate={(v) => (isTraceableGoogleDriveLink(v) ? null : PLAN_LINK_HELP_MESSAGE)}
+                  onSave={onUpdateDocumentsUrl}
+                />
+              ) : (
+                "—"
+              )}
+            </td>
+            <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]" onClick={(e) => e.stopPropagation()}>
+              <span className="inline-flex flex-wrap items-center gap-1.5">
+                {g.surveyNo ? <span className="text-[var(--sb-text)]">{g.surveyNo}</span> : null}
+                {!g.surveyNo && g.sheetId != null && onUpdateSurveyNo ? (
+                  <InlineFieldControl
+                    sheetId={g.sheetId}
+                    kind="text"
+                    triggerLabel="Add survey no."
+                    tooltip="Set survey number"
+                    placeholder="Survey number…"
+                    inputWidth={120}
+                    onSave={onUpdateSurveyNo}
+                  />
+                ) : !g.surveyNo ? (
+                  "—"
+                ) : null}
+              </span>
+            </td>
+            <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]" onClick={(e) => e.stopPropagation()}>
+              {g.surveyClass ? (
+                <SurveyClassBadge value={g.surveyClass} />
+              ) : g.sheetId != null && onUpdateSurveyClass ? (
+                <InlineFieldControl
+                  sheetId={g.sheetId}
+                  kind="select"
+                  triggerLabel="Set class"
+                  tooltip="Set this sheet's survey class (admin or private)"
+                  selectOptions={SURVEY_CLASS_OPTIONS}
+                  onSave={(sheetId, value) => onUpdateSurveyClass(sheetId, value as "admin" | "private")}
+                />
+              ) : (
+                "—"
+              )}
+            </td>
+            <td className="px-2.5 py-[6px] text-right tabular-nums text-[var(--sb-text-muted)]">{g.lots.length}</td>
+            <td className="px-2.5 py-[6px] text-right tabular-nums text-[var(--sb-text-muted)]">
+              {formatArea(g.totalArea)}
+            </td>
+            <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{g.encodedBy || "—"}</td>
+            {onViewSheet && (
+              <td className="px-2.5 py-[6px]" onClick={(e) => e.stopPropagation()}>
+                <Tooltip label="Preview whole sheet — all lots + coordinates">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onViewSheet({
+                        sheetNo: g.sheetNo,
+                        province: g.province,
+                        municipality: g.municipality,
+                        lots: g.lots,
+                      })
+                    }
+                    className="flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded-[7px] border-0 bg-[var(--sb-accent-bg)] p-0 text-[var(--sb-accent)] transition-colors duration-100 hover:opacity-75"
+                  >
+                    <Eye size={12} />
+                  </button>
+                </Tooltip>
+              </td>
+            )}
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 
@@ -1072,128 +1111,135 @@ function LotsTable({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId, features]);
 
+  // MOBILE PASS (scroll fix): same as SheetsTable — horizontal scroll is
+  // now owned by the grandparent wrapper in AttributeTable, so the
+  // per-table `overflow-x-auto` div was removed here too. `min-w` on the
+  // table is unchanged.
   return (
-    // MOBILE PASS: same horizontal-scroll wrapper as SheetsTable, plus a
-    // min-width on the table so the ~9-10 lot columns don't get squeezed
-    // into illegibility on a phone — the row scrolls sideways instead.
-    <div className="w-full overflow-x-auto" style={{ WebkitOverflowScrolling: "touch" }}>
-      <table className="w-full min-w-[760px] border-collapse text-[11.5px]">
-        <thead>
-          <tr>
-            <th
-              className="sticky top-0 z-10 w-9 px-2.5 py-[7px] backdrop-blur sm:w-7"
-              style={{
-                background: "color-mix(in srgb, var(--sb-hover) 92%, transparent)",
-                borderBottom: `1px solid ${HAIRLINE}`,
+    <table className="w-full min-w-[760px] border-collapse text-[11.5px]">
+      <thead>
+        <tr>
+          <th
+            className="sticky top-0 z-10 w-9 px-2.5 py-[7px] backdrop-blur sm:w-7"
+            style={{
+              background: "color-mix(in srgb, var(--sb-hover) 92%, transparent)",
+              borderBottom: `1px solid ${HAIRLINE}`,
+            }}
+          >
+            <Tooltip label={allVisibleSelected ? "Deselect all visible lots" : "Select all visible lots"}>
+              <Checkbox checked={allVisibleSelected} onChange={onToggleColorSelectAll} />
+            </Tooltip>
+          </th>
+          {columns.map((h) => (
+            <Th key={h} numeric={NUMERIC_COLUMNS.has(h)}>
+              {h}
+            </Th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {features.map((f, i) => {
+          const id = String(f.id);
+          const isSelected = selectedId != null && id === String(selectedId);
+          const isColorChecked = colorSelectedIds.has(id);
+          const rowColor = lotColors?.[id];
+
+          const baseBg = rowColor
+            ? hexToRgba(rowColor, isSelected ? 0.28 : 0.16)
+            : isSelected
+              ? "var(--sb-accent-bg)"
+              : isColorChecked
+                ? "var(--sb-accent-bg)"
+                : i % 2 === 1
+                  ? "color-mix(in srgb, var(--sb-hover) 45%, transparent)"
+                  : "transparent";
+
+          return (
+            <tr
+              key={f.id}
+              ref={(el) => {
+                rowRefs.current[id] = el;
+              }}
+              onClick={() => onRowClick?.(f)}
+              style={{ background: baseBg, borderBottom: `1px solid ${HAIRLINE_SOFT}` }}
+              className={`transition-colors duration-100 ${onRowClick ? "cursor-pointer" : ""}`}
+              onMouseEnter={(e) => {
+                if (!onRowClick || isSelected) return;
+                e.currentTarget.style.background = rowColor ? hexToRgba(rowColor, 0.24) : "var(--sb-hover)";
+              }}
+              onMouseLeave={(e) => {
+                if (!onRowClick || isSelected) return;
+                e.currentTarget.style.background = baseBg;
               }}
             >
-              <Tooltip label={allVisibleSelected ? "Deselect all visible lots" : "Select all visible lots"}>
-                <Checkbox checked={allVisibleSelected} onChange={onToggleColorSelectAll} />
-              </Tooltip>
-            </th>
-            {columns.map((h) => (
-              <Th key={h} numeric={NUMERIC_COLUMNS.has(h)}>
-                {h}
-              </Th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {features.map((f, i) => {
-            const id = String(f.id);
-            const isSelected = selectedId != null && id === String(selectedId);
-            const isColorChecked = colorSelectedIds.has(id);
-            const rowColor = lotColors?.[id];
-
-            const baseBg = rowColor
-              ? hexToRgba(rowColor, isSelected ? 0.28 : 0.16)
-              : isSelected
-                ? "var(--sb-accent-bg)"
-                : isColorChecked
-                  ? "var(--sb-accent-bg)"
-                  : i % 2 === 1
-                    ? "color-mix(in srgb, var(--sb-hover) 45%, transparent)"
-                    : "transparent";
-
-            return (
-              <tr
-                key={f.id}
-                ref={(el) => {
-                  rowRefs.current[id] = el;
-                }}
-                onClick={() => onRowClick?.(f)}
-                style={{ background: baseBg, borderBottom: `1px solid ${HAIRLINE_SOFT}` }}
-                className={`transition-colors duration-100 ${onRowClick ? "cursor-pointer" : ""}`}
-                onMouseEnter={(e) => {
-                  if (!onRowClick || isSelected) return;
-                  e.currentTarget.style.background = rowColor ? hexToRgba(rowColor, 0.24) : "var(--sb-hover)";
-                }}
-                onMouseLeave={(e) => {
-                  if (!onRowClick || isSelected) return;
-                  e.currentTarget.style.background = baseBg;
-                }}
-              >
-                <td className="px-2.5 py-[6px]" onClick={(e) => e.stopPropagation()}>
-                  <Checkbox checked={isColorChecked} onChange={() => onToggleColorSelect(id)} />
-                </td>
-                {showSheetNo && (
-                  <td
-                    className="px-2.5 py-[6px] font-medium text-[var(--sb-text)]"
-                    style={{
-                      boxShadow: isSelected
-                        ? "inset 2px 0 0 var(--sb-accent)"
-                        : rowColor
-                          ? `inset 2px 0 0 ${rowColor}`
-                          : "inset 2px 0 0 transparent",
-                    }}
-                  >
-                    {f.properties.sheetNo || "—"}
-                  </td>
-                )}
+              <td className="px-2.5 py-[6px]" onClick={(e) => e.stopPropagation()}>
+                <Checkbox checked={isColorChecked} onChange={() => onToggleColorSelect(id)} />
+              </td>
+              {showSheetNo && (
                 <td
                   className="px-2.5 py-[6px] font-medium text-[var(--sb-text)]"
-                  style={
-                    showSheetNo
-                      ? undefined
-                      : {
-                          boxShadow: isSelected
-                            ? "inset 2px 0 0 var(--sb-accent)"
-                            : rowColor
-                              ? `inset 2px 0 0 ${rowColor}`
-                              : "inset 2px 0 0 transparent",
-                        }
-                  }
+                  style={{
+                    boxShadow: isSelected
+                      ? "inset 2px 0 0 var(--sb-accent)"
+                      : rowColor
+                        ? `inset 2px 0 0 ${rowColor}`
+                        : "inset 2px 0 0 transparent",
+                  }}
                 >
-                  <span className="inline-flex items-center gap-1.5">
-                    {rowColor && (
-                      <Tooltip label={`Colored: ${rowColor}`}>
-                        <span
-                          className="inline-block h-2 w-2 flex-shrink-0 rounded-full ring-1 ring-[var(--sb-bg)]"
-                          style={{ background: rowColor, boxShadow: "0 0 0 1px rgba(15,23,42,0.15)" }}
-                        />
-                      </Tooltip>
-                    )}
-                    {f.properties.lotNo}
-                  </span>
+                  {f.properties.sheetNo || "—"}
                 </td>
-                <td className="max-w-[140px] truncate px-2.5 py-[6px] text-[var(--sb-text-muted)]">{f.properties.owner}</td>
-                <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{f.properties.barangay}</td>
-                <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{f.properties.municipality}</td>
-                <td className="whitespace-nowrap px-2.5 py-[6px] text-[var(--sb-text-muted)]">
-                  {formatDate(f.properties.dateSurveyed)}
-                </td>
-                <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{f.properties.surveyor}</td>
-                <td className="px-2.5 py-[6px] text-right tabular-nums text-[var(--sb-text-muted)]">
-                  {f.properties.areaSqm}
-                </td>
-                <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{f.properties.patentNo}</td>
-                <td className="max-w-[160px] truncate px-2.5 py-[6px] text-[var(--sb-text-muted)]">{f.properties.remarks}</td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
+              )}
+              <td
+                className="px-2.5 py-[6px] font-medium text-[var(--sb-text)]"
+                style={
+                  showSheetNo
+                    ? undefined
+                    : {
+                        boxShadow: isSelected
+                          ? "inset 2px 0 0 var(--sb-accent)"
+                          : rowColor
+                            ? `inset 2px 0 0 ${rowColor}`
+                            : "inset 2px 0 0 transparent",
+                      }
+                }
+              >
+                <span className="inline-flex items-center gap-1.5">
+                  {rowColor && (
+                    <Tooltip label={`Colored: ${rowColor}`}>
+                      <span
+                        className="inline-block h-2 w-2 flex-shrink-0 rounded-full ring-1 ring-[var(--sb-bg)]"
+                        style={{ background: rowColor, boxShadow: "0 0 0 1px rgba(15,23,42,0.15)" }}
+                      />
+                    </Tooltip>
+                  )}
+                  {f.properties.lotNo}
+                </span>
+              </td>
+              <td className="max-w-[140px] px-2.5 py-[6px] text-[var(--sb-text-muted)]">
+                <Tooltip label={f.properties.owner || "—"}>
+                  <span className="block max-w-[140px] cursor-help truncate">{f.properties.owner}</span>
+                </Tooltip>
+              </td>
+              <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{f.properties.barangay}</td>
+              <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{f.properties.municipality}</td>
+              <td className="whitespace-nowrap px-2.5 py-[6px] text-[var(--sb-text-muted)]">
+                {formatDate(f.properties.dateSurveyed)}
+              </td>
+              <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{f.properties.surveyor}</td>
+              <td className="px-2.5 py-[6px] text-right tabular-nums text-[var(--sb-text-muted)]">
+                {f.properties.areaSqm}
+              </td>
+              <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{f.properties.patentNo}</td>
+              <td className="max-w-[160px] px-2.5 py-[6px] text-[var(--sb-text-muted)]">
+                <Tooltip label={f.properties.remarks || "—"}>
+                  <span className="block max-w-[160px] cursor-help truncate">{f.properties.remarks}</span>
+                </Tooltip>
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
   );
 }
 

@@ -1,26 +1,39 @@
 // Target path: src/app/api/map/lots/route.ts
 //
-// COMBINED FACET FILTER (this pass): ProjectionModal.tsx no longer produces
-// one pick per checkbox (proj:cenro:<id>, proj:muni:<id>, year:<b>:<y>,
-// etc). It's 4 flat tabs (CENRO / Municipality / Barangay / Year) with
-// cross-filtering between them, and one "Apply" now builds ONE combined
-// filter-set across everything checked in all 4 tabs, ANDed together:
-//   cenro IN (...) AND municipality IN (...) AND barangay IN (...) AND year IN (...)
+// COMBINED FACET FILTER: ProjectionModal.tsx builds ONE combined filter-set
+// across everything checked in its 5 tabs (CENRO / Municipality / Barangay /
+// Year / Classification), ANDed together:
+//   cenro IN (...) AND municipality IN (...) AND barangay IN (...)
+//     AND year IN (...) AND classification IN (...)
 // (any facet the user left empty is just omitted from the AND). This is
 // also the shape a future Excel export / printable report will reuse
 // directly against this same endpoint.
 //
-// New params, all comma-separated integers, all optional and combinable:
+// New params, all comma-separated, all optional and combinable:
 //   &cenro_ids=1,2            (lots whose municipality falls under any of these CENROs)
 //   &municipality_ids=5,9
 //   &barangay_ids=12,40
 //   &years=2023,2024
-// If ANY of these four params is present (even a single id), the request
+//   &classifications=RFPA,FPA
+// If ANY of these five params is present (even a single value), the request
 // is treated as a facet-filter request and the legacy single-select modes
 // below (id / sheet_id / single cenro_id / single municipality_id / single
 // barangay_id[+year] / surveyor_id) are skipped entirely -- the two modes
 // are mutually exclusive per request, same as the legacy modes always were
-// exclusive of each other.
+// exclusive of each other. Legacy single-select requests have no way to
+// also filter by classification -- that's intentional for this pass; only
+// the new combined-facet path (ProjectionModal) supports it.
+//
+// CLASSIFICATION (this pass): "classification" isn't a real column -- it's
+// derived per-lot from area_sqm vs. the threshold that applies to that
+// lot's municipality (a municipality-level override in
+// area_classification_rules if one exists, else its CENRO's default), via
+// the get_rfpa_threshold(municipality_id) SQL function. A lot is RFPA if
+// area_sqm <= that threshold, else FPA. A municipality with no rule at
+// either level makes get_rfpa_threshold() return NULL for its lots; those
+// lots are excluded whenever a classifications filter is active (never
+// silently counted as RFPA or FPA), and expose classification: null on the
+// feature otherwise.
 //
 // The legacy singular modes are UNCHANGED and still used by: single-lot
 // fetch from search select (`id`), a specific sheet (`sheet_id`), and
@@ -44,6 +57,7 @@
 //   /api/map/lots?barangay_id=12&year=2025            (legacy: one year within a barangay)
 //   /api/map/lots?cenro_ids=1,2&years=2023,2024       (combined facet filter — ProjectionModal)
 //   /api/map/lots?municipality_ids=5,9&barangay_ids=12&years=2024
+//   /api/map/lots?cenro_ids=3&classifications=RFPA    (only RFPA-classified lots under CENRO 3)
 //
 // Optional, combinable with any of the above — restricts to the current map
 // viewport once a selection is large (e.g. "whole municipality"):
@@ -80,10 +94,25 @@
 // comes from control_points instead. Null if l.municipality_id is null
 // (a sheet located only via control_point, with no legacy per-lot
 // municipality FK set).
+//
+// properties.classification / classificationThreshold (this pass): same
+// derivation as the classifications filter above, always computed and
+// returned regardless of whether a classifications filter was applied, so
+// the map/report/attribute table can show RFPA vs FPA on every lot. Both
+// are null when the lot's municipality has no rule at either level.
 import { NextResponse } from "next/server";
 import { getPool } from "@/lib/db";
 
 const MAX_FEATURES = 2000;
+
+const VALID_CLASSIFICATIONS = ["RFPA", "FPA"] as const;
+type ClassificationCode = (typeof VALID_CLASSIFICATIONS)[number];
+
+// Same CASE expression used in tree/route.ts's facets mode — kept in sync
+// manually since the two routes don't currently share a query-builder
+// module. If a shared lib/sql helpers file gets introduced later, this is
+// the first thing to hoist into it.
+const CLASSIFICATION_CASE_SQL = `CASE WHEN l.area_sqm <= get_rfpa_threshold(l.municipality_id) THEN 'RFPA' ELSE 'FPA' END`;
 
 // All the *_id params below are expected to be positive integers (Postgres
 // int/bigint columns). Anything else would otherwise reach the DB as a raw
@@ -95,7 +124,7 @@ function parsePositiveInt(value: string | null): number | null {
   return Number.isSafeInteger(n) && n > 0 ? n : null;
 }
 
-// Parses a comma-separated list of positive integers for the new combined
+// Parses a comma-separated list of positive integers for the combined
 // facet-filter params (cenro_ids, municipality_ids, barangay_ids, years).
 // A missing param yields an empty array (== "no filter on this facet");
 // a present-but-malformed entry yields null so the caller can 400 instead
@@ -111,6 +140,22 @@ function parsePositiveIntList(value: string | null): number[] | null {
   return out;
 }
 
+// Parses a comma-separated list of classification codes for the
+// `classifications` facet param. Case-insensitive on input; any token
+// outside RFPA/FPA returns null so the caller can 400 instead of silently
+// matching nothing.
+function parseClassificationList(value: string | null): ClassificationCode[] | null {
+  if (value == null || value.trim() === "") return [];
+  const out: ClassificationCode[] = [];
+  for (const part of value.split(",")) {
+    const trimmed = part.trim().toUpperCase();
+    if (trimmed === "") continue;
+    if (!(VALID_CLASSIFICATIONS as readonly string[]).includes(trimmed)) return null;
+    out.push(trimmed as ClassificationCode);
+  }
+  return out;
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const idRaw = searchParams.get("id");
@@ -122,26 +167,42 @@ export async function GET(request: Request) {
   const yearRaw = searchParams.get("year");
   const bbox = searchParams.get("bbox");
 
-  // New combined facet-filter params (ProjectionModal's saved filter-sets).
+  // Combined facet-filter params (ProjectionModal's saved filter-sets).
   const cenroIdsRaw = searchParams.get("cenro_ids");
   const municipalityIdsRaw = searchParams.get("municipality_ids");
   const barangayIdsRaw = searchParams.get("barangay_ids");
   const yearsRaw = searchParams.get("years");
+  const classificationsRaw = searchParams.get("classifications");
 
   const cenroIds = parsePositiveIntList(cenroIdsRaw);
   const municipalityIds = parsePositiveIntList(municipalityIdsRaw);
   const barangayIds = parsePositiveIntList(barangayIdsRaw);
   const years = parsePositiveIntList(yearsRaw);
+  const classifications = parseClassificationList(classificationsRaw);
 
-  if (cenroIds == null || municipalityIds == null || barangayIds == null || years == null) {
+  if (
+    cenroIds == null ||
+    municipalityIds == null ||
+    barangayIds == null ||
+    years == null ||
+    classifications == null
+  ) {
     return NextResponse.json(
-      { error: "cenro_ids, municipality_ids, barangay_ids, and years must be comma-separated positive integers." },
+      {
+        error:
+          "cenro_ids, municipality_ids, barangay_ids, and years must be comma-separated positive integers; " +
+          "classifications must be a comma-separated list of RFPA and/or FPA.",
+      },
       { status: 400 }
     );
   }
 
   const hasFacetFilter =
-    cenroIds.length > 0 || municipalityIds.length > 0 || barangayIds.length > 0 || years.length > 0;
+    cenroIds.length > 0 ||
+    municipalityIds.length > 0 ||
+    barangayIds.length > 0 ||
+    years.length > 0 ||
+    classifications.length > 0;
 
   const conditions: string[] = ["l.geom IS NOT NULL"];
   const params: unknown[] = [];
@@ -167,6 +228,13 @@ export async function GET(request: Request) {
     }
     if (years.length > 0) {
       conditions.push(`EXTRACT(YEAR FROM l.date_surveyed) = ANY(${addParam(years)})`);
+    }
+    if (classifications.length > 0) {
+      // Municipalities with no rule at either level return NULL from
+      // get_rfpa_threshold() and are excluded here rather than matching
+      // either bucket -- the AND makes this automatic since NULL = ANY(...)
+      // is NULL (falsy), not an error, but stated explicitly for clarity.
+      conditions.push(`(${CLASSIFICATION_CASE_SQL}) = ANY(${addParam(classifications)})`);
     }
   } else {
     // Legacy single-select modes — unchanged from before this pass.
@@ -222,7 +290,7 @@ export async function GET(request: Request) {
         {
           error:
             "Provide one of: id, sheet_id, barangay_id (optionally with year), municipality_id, cenro_id, surveyor_id, " +
-            "or a combined facet filter (cenro_ids/municipality_ids/barangay_ids/years).",
+            "or a combined facet filter (cenro_ids/municipality_ids/barangay_ids/years/classifications).",
         },
         { status: 400 }
       );
@@ -260,7 +328,12 @@ export async function GET(request: Request) {
       s.name AS surveyor_name,
       eu.username AS encoded_by_username,
       cen.id AS cenro_id,
-      cen.name AS cenro_name
+      cen.name AS cenro_name,
+      get_rfpa_threshold(l.municipality_id) AS classification_threshold,
+      CASE
+        WHEN get_rfpa_threshold(l.municipality_id) IS NULL THEN NULL
+        ELSE ${CLASSIFICATION_CASE_SQL}
+      END AS classification
     FROM lots l
     LEFT JOIN lot_sheets ls ON ls.id = l.lot_sheet_id
     LEFT JOIN control_points cp ON cp.id = ls.control_point_id
@@ -307,6 +380,8 @@ export async function GET(request: Request) {
       encodedBy: row.encoded_by_username,
       cenroId: row.cenro_id,
       cenro: row.cenro_name,
+      classification: row.classification,
+      classificationThreshold: row.classification_threshold,
     },
   }));
 

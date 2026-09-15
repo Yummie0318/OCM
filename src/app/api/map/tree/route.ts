@@ -1,25 +1,41 @@
 // Target path: src/app/api/map/tree/route.ts
 //
-// FACETED CROSS-FILTERING (this pass): ProjectionModal.tsx no longer renders
-// a nested tree. It's 4 flat tabs — CENRO / Municipality / Barangay / Year —
-// each a checkbox list, and checking boxes in one tab narrows what shows up
-// in the OTHER three (e.g. checking Year 2023 makes the Municipality tab
-// only list municipalities that actually have lots surveyed in 2023).
+// FACETED CROSS-FILTERING: ProjectionModal.tsx renders 5 flat tabs — CENRO /
+// Municipality / Barangay / Year / Classification — each a checkbox list,
+// and checking boxes in one tab narrows what shows up in the OTHER four
+// (e.g. checking Year 2023 makes the Municipality tab only list
+// municipalities that actually have lots surveyed in 2023; checking
+// Classification=RFPA makes every other tab only list options that have at
+// least one RFPA-classified lot).
+//
+// CLASSIFICATION FACET (this pass): `classifications` joins the other four
+// facet params (`cenro_ids`, `municipality_ids`, `barangay_ids`, `years`) as
+// a fifth, comma-separated list of RFPA/FPA. Unlike the other four,
+// "classification" isn't a real table/column — it's derived per-lot from
+// `area_sqm` vs. the area_classification_rules threshold that applies to
+// that lot's municipality (municipality-level override if one exists, else
+// its CENRO's default), via the `get_rfpa_threshold(municipality_id)` SQL
+// function. See area_classification_rules / get_rfpa_threshold in the DB —
+// a municipality with no rule at either level returns NULL and its lots are
+// excluded from any classification-filtered result (never silently counted
+// as one bucket or the other).
 //
 // New mode added to support that: `level=facets&target=<level>` plus
 // whichever facet arrays are currently checked (`cenro_ids`,
-// `municipality_ids`, `barangay_ids`, `years`, all comma-separated). It
-// returns {id, label, count} for `target`, filtered by every OTHER
-// non-empty facet array — deliberately NOT filtered by target's own array,
-// since a facet list filtered by itself would hide every option the user
-// hasn't already checked, making it impossible to discover or uncheck
-// anything.
+// `municipality_ids`, `barangay_ids`, `years`, `classifications`, all
+// comma-separated). It returns {id, label, count} for `target`, filtered by
+// every OTHER non-empty facet array — deliberately NOT filtered by target's
+// own array, since a facet list filtered by itself would hide every option
+// the user hasn't already checked, making it impossible to discover or
+// uncheck anything.
 //
 // The original per-level endpoints (`level=cenros/municipalities/
 // barangays/years`) are UNCHANGED and still used by Sidebar.tsx's own
 // Layers-tab tree (Municipality -> Barangay -> Year, unscoped by CENRO) —
 // that tree is a separate, simpler "browse and check one year" flow and
-// wasn't part of this pass.
+// wasn't part of this pass. There is deliberately no legacy
+// `level=classifications` endpoint since classification never existed
+// before the facets mode.
 //
 // Usage:
 //   /api/map/tree?level=cenros
@@ -29,6 +45,8 @@
 //   /api/map/tree?level=years&barangay_id=12
 //   /api/map/tree?level=facets&target=municipalities&cenro_ids=1,2&years=2023,2024
 //     -> municipalities with lots under CENRO 1 or 2 AND surveyed in 2023 or 2024
+//   /api/map/tree?level=facets&target=classifications&cenro_ids=3
+//     -> {RFPA: n, FPA: m} counts for lots under CENRO 3 only
 import { NextResponse } from "next/server";
 import { getPool } from "@/lib/db";
 
@@ -38,8 +56,21 @@ interface TreeNode {
   count: number;
 }
 
-const FACET_TARGETS = ["cenros", "municipalities", "barangays", "years"] as const;
+const FACET_TARGETS = ["cenros", "municipalities", "barangays", "years", "classifications"] as const;
 type FacetTarget = (typeof FACET_TARGETS)[number];
+
+const VALID_CLASSIFICATIONS = ["RFPA", "FPA"] as const;
+type ClassificationCode = (typeof VALID_CLASSIFICATIONS)[number];
+
+// The same CASE expression used everywhere classification needs deriving:
+// a lot is RFPA if its area is at or under its municipality's threshold
+// (municipality-level override from area_classification_rules if one
+// exists, else its CENRO's default via get_rfpa_threshold()), else FPA.
+// Municipalities with no rule at either level return NULL from
+// get_rfpa_threshold() and are excluded via the NOT NULL guard added
+// alongside every use of this expression, rather than silently landing in
+// either bucket.
+const CLASSIFICATION_CASE_SQL = `CASE WHEN l.area_sqm <= get_rfpa_threshold(l.municipality_id) THEN 'RFPA' ELSE 'FPA' END`;
 
 // Parses a comma-separated list of positive integers, e.g. "1,2,3". Blank
 // or missing params yield an empty array (== "no filter on this facet"),
@@ -53,6 +84,24 @@ function parseIntList(raw: string | null): number[] | null {
     if (trimmed === "") continue;
     if (!/^\d+$/.test(trimmed)) return null;
     out.push(Number(trimmed));
+  }
+  return out;
+}
+
+// Parses a comma-separated list of classification codes. Case-insensitive
+// on input ("rfpa" -> "RFPA") since this only ever reaches the query as a
+// literal string compared against the CASE expression's output, not a DB
+// lookup. Blank/missing yields an empty array (no filter); any token
+// outside RFPA/FPA returns null so the caller can 400 instead of silently
+// matching nothing.
+function parseClassificationList(raw: string | null): ClassificationCode[] | null {
+  if (raw == null || raw.trim() === "") return [];
+  const out: ClassificationCode[] = [];
+  for (const part of raw.split(",")) {
+    const trimmed = part.trim().toUpperCase();
+    if (trimmed === "") continue;
+    if (!(VALID_CLASSIFICATIONS as readonly string[]).includes(trimmed)) return null;
+    out.push(trimmed as ClassificationCode);
   }
   return out;
 }
@@ -146,10 +195,21 @@ export async function GET(request: Request) {
     const municipalityIds = parseIntList(searchParams.get("municipality_ids"));
     const barangayIds = parseIntList(searchParams.get("barangay_ids"));
     const years = parseIntList(searchParams.get("years"));
+    const classifications = parseClassificationList(searchParams.get("classifications"));
 
-    if (cenroIds == null || municipalityIds == null || barangayIds == null || years == null) {
+    if (
+      cenroIds == null ||
+      municipalityIds == null ||
+      barangayIds == null ||
+      years == null ||
+      classifications == null
+    ) {
       return NextResponse.json(
-        { error: "cenro_ids, municipality_ids, barangay_ids, and years must be comma-separated integers." },
+        {
+          error:
+            "cenro_ids, municipality_ids, barangay_ids, and years must be comma-separated integers; " +
+            "classifications must be a comma-separated list of RFPA and/or FPA.",
+        },
         { status: 400 }
       );
     }
@@ -174,6 +234,9 @@ export async function GET(request: Request) {
     }
     if (target !== "years" && years.length > 0) {
       conditions.push(`EXTRACT(YEAR FROM l.date_surveyed) = ANY(${addParam(years)})`);
+    }
+    if (target !== "classifications" && classifications.length > 0) {
+      conditions.push(`(${CLASSIFICATION_CASE_SQL}) = ANY(${addParam(classifications)})`);
     }
 
     let sql: string;
@@ -209,7 +272,7 @@ export async function GET(request: Request) {
         GROUP BY b.id, b.name
         ORDER BY b.name
       `;
-    } else {
+    } else if (target === "years") {
       conditions.push("l.date_surveyed IS NOT NULL");
       sql = `
         SELECT
@@ -221,6 +284,24 @@ export async function GET(request: Request) {
         WHERE ${conditions.join(" AND ")}
         GROUP BY 1, 2
         ORDER BY 1 DESC
+      `;
+    } else {
+      // classifications — not a real table, so id/label are the literal
+      // 'RFPA'/'FPA' strings, grouped from the same CASE expression used to
+      // filter every other target. Lots whose municipality has no rule at
+      // either level (get_rfpa_threshold() IS NULL) are excluded rather
+      // than falling into either bucket.
+      conditions.push("get_rfpa_threshold(l.municipality_id) IS NOT NULL");
+      sql = `
+        SELECT cls AS id, cls AS label, COUNT(*)::int AS count
+        FROM (
+          SELECT l.id, ${CLASSIFICATION_CASE_SQL} AS cls
+          FROM lots l
+          JOIN municipalities m ON m.id = l.municipality_id
+          WHERE ${conditions.join(" AND ")}
+        ) sub
+        GROUP BY cls
+        ORDER BY cls
       `;
     }
 

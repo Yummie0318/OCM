@@ -1182,7 +1182,7 @@ function MapViewerPageInner() {
   return (
     <main
       className={`${uiFont.className} relative flex h-screen overflow-hidden bg-[var(--sb-bg)]`}
-      style={vars}
+      style={{ ...vars, height: "100dvh" }}
     >
       {isMobile && (
         <button

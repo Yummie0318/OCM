@@ -2,21 +2,36 @@
 
 // Target path: src/components/map/ProjectionModal.tsx
 //
-// REBUILT AS TABS: this used to be a single nested checkbox tree
-// (CENRO -> Municipality -> Barangay -> Year). It's now 4 flat tabs —
-// CENRO, Municipality, Barangay, Year — each just a checkbox list for that
-// level, with FULL CROSS-FILTERING between them: whichever tab you're
-// looking at is always narrowed by whatever's checked in the other three.
-// e.g. check "2023" in the Year tab, then switch to Municipality — you'll
-// only see municipalities that actually have lots surveyed in 2023.
+// 5 TABS: CENRO, Municipality, Barangay, Year, Classification — each a flat
+// checkbox list for that facet, with FULL CROSS-FILTERING between all five.
+// Whichever tab you're looking at is always narrowed by whatever's checked
+// in the OTHER four. e.g. check "2023" in Year, then switch to
+// Classification — you'll only see RFPA/FPA options (and their counts) for
+// lots actually surveyed in 2023. Check "RFPA" in Classification, then
+// switch to Municipality — you'll only see municipalities that have at
+// least one RFPA-classified lot.
 //
-// What "Project" produces: combines everything checked across all 4 tabs
+// CLASSIFICATION (this pass): unlike the other four tabs, "Classification"
+// isn't backed by a real table — RFPA/FPA is derived per-lot from
+// area_sqm vs. the area_classification_rules threshold that applies to
+// that lot's municipality (a municipality-level override if one exists,
+// else its CENRO's default), via the DB's get_rfpa_threshold() function.
+// From this component's point of view it behaves exactly like any other
+// facet though: it's just a checkbox list fetched the same way, with
+// static id/label values ("RFPA"/"FPA") instead of numeric DB ids, and
+// counts that respond to cross-filtering same as everything else. See
+// route.ts's file-top note for the full derivation and why a municipality
+// with no rule at either level is excluded rather than guessed into a
+// bucket.
+//
+// What "Project" produces: combines everything checked across all 5 tabs
 // into a single AND filter:
 //
 //   cenro IN (checked cenros)
 //   AND municipality IN (checked municipalities)
 //   AND barangay IN (checked barangays)
 //   AND year IN (checked years)
+//   AND classification IN (checked classifications)
 //
 // (any facet left empty is just omitted from the AND — checking nothing in
 // a tab means "don't filter on that facet at all", not "match nothing").
@@ -26,54 +41,76 @@
 // a search result today, so multiple saved filter-sets can coexist and be
 // toggled/removed independently, same as multiple layers could before.
 //
-// REPORTING (this pass): a second button, "Generate Report", builds the
-// exact same combined facet query as Project but instead of applying it to
-// the map, opens /reports/lots?<query>&label=<filterLabel> in a new tab.
-// That report page hits /api/map/lots with the identical params, so "what's
-// on the map" and "what's in the report" always share one query contract —
-// see route.ts's file-top note and src/app/reports/lots/page.tsx.
+// REPORTING: a second button, "Generate Report", builds the exact same
+// combined facet query as Project but instead of applying it to the map,
+// opens /reports/lots?<query>&label=<filterLabel> in a new tab. That report
+// page hits /api/map/lots with the identical params, so "what's on the
+// map" and "what's in the report" always share one query contract — see
+// route.ts's file-top note and src/app/reports/lots/page.tsx.
 //
 // Cross-filter fetching: a tab's option list is only fetched when the user
 // switches TO it (not on every checkbox click), since checking/unchecking
 // items within a tab never changes that tab's own list (a facet is never
 // filtered by itself — see route.ts's file-top note on why). Switching
-// tabs re-fetches using whatever's checked everywhere else at that moment.
+// tabs re-fetches using whatever's checked everywhere else at that moment,
+// including Classification, same as the other four.
 //
 // Fetches from /api/map/tree?level=facets&target=<level>&cenro_ids=...
-// &municipality_ids=...&barangay_ids=...&years=... — see route.ts.
+// &municipality_ids=...&barangay_ids=...&years=...&classifications=... —
+// see route.ts.
 //
 // Rendered via createPortal to document.body (same pattern as Sidebar's
 // Tooltip) so it's never clipped by the sidebar's own overflow, and reads
 // theme colors via useSidebarTheme() -- which works fine through a portal
 // since React context follows the component tree, not the DOM tree.
 //
-// RESPONSIVE / FIXED-SIZE PASS: the dialog now uses a fixed height
-// (`h-[min(620px,85vh)]`) instead of `max-h-[...]`, so it no longer grows
-// or shrinks depending on how many rows the active tab happens to have —
-// only the checkbox list scrolls internally. The shell also picks up side
+// RESPONSIVE / FIXED-SIZE: the dialog uses a fixed height
+// (`h-[min(620px,85vh)]`) instead of `max-h-[...]`, so it doesn't grow or
+// shrink depending on how many rows the active tab happens to have — only
+// the checkbox list scrolls internally. The shell also picks up side
 // margins and the footer buttons stack on narrow screens so three actions
-// never overflow a phone-width viewport.
+// never overflow a phone-width viewport. With a 5th tab, tab labels stay
+// icon+short-label on all sizes rather than hiding text on mobile, since
+// five equal-width tabs are already tight — see the tab button className.
 
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { X, Filter, Landmark, Building2, MapPin, CalendarDays, Check, Loader2, FileText } from "lucide-react";
+import {
+  X,
+  Filter,
+  Landmark,
+  Building2,
+  MapPin,
+  CalendarDays,
+  Scale,
+  Check,
+  Loader2,
+  FileText,
+} from "lucide-react";
 import type { TreeNodeData, SelectionMeta } from "@/lib/geo";
 import { useSidebarTheme } from "./SidebarThemeContext";
 import { uiFont } from "./sidebarTheme";
 
-type FacetKey = "cenros" | "municipalities" | "barangays" | "years";
+type FacetKey = "cenros" | "municipalities" | "barangays" | "years" | "classifications";
 
 const TABS: { key: FacetKey; label: string; icon: typeof Landmark; queryParam: string }[] = [
   { key: "cenros", label: "CENRO", icon: Landmark, queryParam: "cenro_ids" },
   { key: "municipalities", label: "Municipality", icon: Building2, queryParam: "municipality_ids" },
   { key: "barangays", label: "Barangay", icon: MapPin, queryParam: "barangay_ids" },
   { key: "years", label: "Year", icon: CalendarDays, queryParam: "years" },
+  { key: "classifications", label: "Class", icon: Scale, queryParam: "classifications" },
 ];
 
 type SelectedMap = Record<FacetKey, Map<string, TreeNodeData>>;
 
 function emptySelected(): SelectedMap {
-  return { cenros: new Map(), municipalities: new Map(), barangays: new Map(), years: new Map() };
+  return {
+    cenros: new Map(),
+    municipalities: new Map(),
+    barangays: new Map(),
+    years: new Map(),
+    classifications: new Map(),
+  };
 }
 
 export interface ProjectionResult {
@@ -134,6 +171,7 @@ export default function ProjectionModal({
     municipalities: null,
     barangays: null,
     years: null,
+    classifications: null,
   });
 
   useEffect(() => setMounted(true), []);
@@ -142,7 +180,7 @@ export default function ProjectionModal({
   useEffect(() => {
     if (open) {
       setSelected(emptySelected());
-      setOptions({ cenros: null, municipalities: null, barangays: null, years: null });
+      setOptions({ cenros: null, municipalities: null, barangays: null, years: null, classifications: null });
       setActiveTab("cenros");
     }
   }, [open]);
@@ -152,7 +190,7 @@ export default function ProjectionModal({
   // click, since a tab's own selections never filter its own list (see
   // file-top note). Switching tabs is the only time cross-filtering needs
   // a fresh fetch, and it always uses whatever is checked right now in the
-  // other three tabs.
+  // other four tabs, Classification included.
   useEffect(() => {
     if (!open) return;
     const params = new URLSearchParams();
@@ -195,7 +233,11 @@ export default function ProjectionModal({
   }
 
   const totalSelectedCount =
-    selected.cenros.size + selected.municipalities.size + selected.barangays.size + selected.years.size;
+    selected.cenros.size +
+    selected.municipalities.size +
+    selected.barangays.size +
+    selected.years.size +
+    selected.classifications.size;
 
   const filterLabel = useMemo(() => {
     const parts: string[] = [];
@@ -228,6 +270,16 @@ export default function ProjectionModal({
           .join(", ")
       );
     }
+    if (selected.classifications.size > 0) {
+      // Only ever RFPA/FPA, so no pluralization/count-collapsing needed —
+      // just show both if both are checked, same as Year's short list.
+      parts.push(
+        Array.from(selected.classifications.values())
+          .map((c) => String(c.label))
+          .sort()
+          .join(", ")
+      );
+    }
     return parts.length > 0 ? parts.join(" · ") : "No filters selected yet";
   }, [selected]);
 
@@ -236,13 +288,23 @@ export default function ProjectionModal({
   // Shared by both "Project" (applies to the map) and "Generate Report"
   // (opens the printable report in a new tab) — both need the exact same
   // combined facet query, just delivered to a different place.
-  function buildFacetQuery(): { query: Record<string, number[]>; label: string } {
-    const query: Record<string, number[]> = {};
+  //
+  // classifications is the one facet whose ids are strings ("RFPA"/"FPA")
+  // rather than numeric DB ids. SelectionMeta['query'] (see geo.ts) only
+  // allows `string | number | number[]` per key -- a mixed
+  // `(string | number)[]` isn't a valid value there -- so classifications
+  // is passed as a single comma-joined STRING ("RFPA,FPA") rather than an
+  // array, same shape as any other single-string query value. handleGenerateReport
+  // below already treats string values as a single already-joined param.
+  function buildFacetQuery(): { query: Record<string, string | number | number[]>; label: string } {
+    const query: Record<string, string | number | number[]> = {};
     if (selected.cenros.size > 0) query.cenro_ids = Array.from(selected.cenros.keys()).map(Number);
     if (selected.municipalities.size > 0)
       query.municipality_ids = Array.from(selected.municipalities.keys()).map(Number);
     if (selected.barangays.size > 0) query.barangay_ids = Array.from(selected.barangays.keys()).map(Number);
     if (selected.years.size > 0) query.years = Array.from(selected.years.keys()).map(Number);
+    if (selected.classifications.size > 0)
+      query.classifications = Array.from(selected.classifications.keys()).join(",");
     return { query, label: filterLabel };
   }
 
@@ -257,8 +319,15 @@ export default function ProjectionModal({
     if (totalSelectedCount === 0) return;
     const { query, label } = buildFacetQuery();
     const params = new URLSearchParams();
-    for (const [key, ids] of Object.entries(query)) {
-      if (ids.length > 0) params.set(key, ids.join(","));
+    for (const [key, value] of Object.entries(query)) {
+      // value is number[] for every facet except classifications, which is
+      // already a single comma-joined string (see buildFacetQuery) -- guard
+      // on Array.isArray rather than assuming .join exists on every value.
+      if (Array.isArray(value)) {
+        if (value.length > 0) params.set(key, value.join(","));
+      } else if (value !== "" && value != null) {
+        params.set(key, String(value));
+      }
     }
     params.set("label", label);
     window.open(`/reports/lots?${params.toString()}`, "_blank", "noopener,noreferrer");
@@ -272,11 +341,6 @@ export default function ProjectionModal({
     <div className={`${uiFont.className} fixed inset-0 z-[200] flex items-center justify-center px-3 sm:px-4`} style={vars}>
       <div className="absolute inset-0" style={{ background: theme.overlayBg }} onClick={onClose} />
       <div
-        // FIXED HEIGHT: was `max-h-[80vh]`, which let the dialog shrink to
-        // fit whatever the active tab's list happened to contain. Using an
-        // explicit height (clamped to the viewport on short screens) keeps
-        // the dialog's outer shape constant no matter how many rows are
-        // loaded — only the list body scrolls.
         className="relative flex h-[min(620px,85vh)] w-[calc(100%-1.5rem)] max-w-[440px] flex-col overflow-hidden rounded-[16px] sm:w-full"
         style={{ background: "var(--sb-bg-elevated)", boxShadow: theme.shadow }}
       >
@@ -296,7 +360,9 @@ export default function ProjectionModal({
           Pick any combination across the tabs below. Project applies the combined filter to the map; Generate Report opens a printable report in a new tab.
         </p>
 
-        {/* Tabs */}
+        {/* Tabs — 5 now, so labels stay short ("Class" not "Classification")
+            at all sizes rather than only hiding on mobile, keeping five
+            equal-width segments legible in the 440px-max dialog. */}
         <div className="mx-3 mt-3 flex flex-shrink-0 items-center gap-1 rounded-full bg-[var(--sb-hover)] p-1 sm:mx-4">
           {TABS.map((tab) => {
             const count = selected[tab.key].size;
@@ -306,7 +372,7 @@ export default function ProjectionModal({
                 key={tab.key}
                 type="button"
                 onClick={() => setActiveTab(tab.key)}
-                className={`flex flex-1 items-center justify-center gap-1 rounded-full border-0 px-1 py-[6px] text-[9.5px] font-semibold transition-colors duration-100 sm:px-1.5 sm:text-[10.5px] ${
+                className={`flex flex-1 items-center justify-center gap-1 rounded-full border-0 px-1 py-[6px] text-[9px] font-semibold transition-colors duration-100 sm:px-1.5 sm:text-[10px] ${
                   activeTab === tab.key
                     ? "bg-[var(--sb-bg)] text-[var(--sb-accent)] shadow-sm"
                     : "bg-transparent text-[var(--sb-text-muted)] hover:text-[var(--sb-text)]"
@@ -331,7 +397,9 @@ export default function ProjectionModal({
         {/* Select all / clear for the active tab */}
         <div className="mb-1 mt-2.5 flex flex-shrink-0 items-center justify-between px-3 sm:px-4">
           <span className="text-[10px] font-bold uppercase tracking-wide text-[var(--sb-text-faint)]">
-            {TABS.find((t) => t.key === activeTab)?.label}
+            {TABS.find((t) => t.key === activeTab)?.label === "Class"
+              ? "Classification"
+              : TABS.find((t) => t.key === activeTab)?.label}
           </span>
           {activeOptions && activeOptions.length > 0 && (
             <button
