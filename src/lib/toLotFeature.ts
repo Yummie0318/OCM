@@ -21,41 +21,32 @@ export function computedLotToFeature(lot: ComputedLot): LotFeature {
       type: "Polygon",
       coordinates: [coordinates],
     },
-    properties: {
-      lotNo: lot.lotNo ?? null,
-      owner: lot.owner ?? "",
-      ownerGivenName: null,
-      ownerSurname: null,
-      province: null,
-      municipality: null,
-      barangay: null,
-      surveyNo: null,
-      dateSurveyed: null,
-      surveyor: null,
-      // Preview features are built client-side before the lot sheet is
-      // ever saved to the DB, so there's no real lot_sheets.id yet --
-      // null here matches the "not saved yet" state, same as the other
-      // not-yet-known fields above.
-      sheetId: null,
-      sheetNo: null,
-      patentNo: null,
-      remarks: null,
-      planUrl: null,
-      // Same reasoning as sheetId/sheetNo above: these all live on
-      // lot_sheets, and a client-side preview built before the lot sheet
-      // is saved has no real row for any of them yet.
-      documentsUrl: null,
-      surveyClass: null,
-      // Same reasoning as encodedBy below: not known until the sheet is
-      // actually saved and joined against municipalities/cenros server-side.
-      cenroId: null,
-      cenro: null,
-      // Same reasoning as sheetId/sheetNo above: this is a client-side
-      // preview built before the lot sheet is saved, so there's no real
-      // lot_sheets.created_by / encoder username yet.
-      encodedBy: null,
-      areaSqm: Number(lot.computedAreaSqm ?? lot.areaSqm ?? 0),
-    },
+properties: {
+  lotNo: lot.lotNo ?? null,
+  owner: lot.owner ?? "",
+  ownerGivenName: null,
+  ownerSurname: null,
+  province: null,
+  municipality: null,
+  barangay: null,
+  surveyNo: null,
+  dateSurveyed: null,
+  surveyor: null,
+  sheetId: null,
+  sheetNo: null,
+  patentNo: null,
+  remarks: null,
+  planUrl: null,
+  documentsUrl: null,
+  surveyClass: null,
+  cenroId: null,
+  cenro: null,
+  encodedBy: null,
+  classification: null,          // add
+  classificationThreshold: null, // add
+  planPrefix: null,              // add
+  areaSqm: Number(lot.computedAreaSqm ?? lot.areaSqm ?? 0),
+},
   };
 }
 
