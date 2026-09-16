@@ -32,7 +32,15 @@ import type { LotFeatureCollection } from "@/lib/geo";
 import { groupFeatures, formatArea, formatDate } from "./group";
 import { buildLotReportWorkbook } from "./reportExcel";
 
-const FACET_KEYS = ["cenro_ids", "municipality_ids", "barangay_ids", "years"] as const;
+const FACET_KEYS = [
+  "cenro_ids",
+  "municipality_ids",
+  "barangay_ids",
+  "years",
+  "classifications",
+  "prefixes",
+] as const;
+
 const BRAND = "OCM-A&D";
 
 const COLUMNS = [
@@ -102,7 +110,8 @@ function LotReportContent() {
   const grandTotals = useMemo(() => {
     const lots = groups.reduce((sum, g) => sum + g.totalLots, 0);
     const area = groups.reduce((sum, g) => sum + g.totalArea, 0);
-    return { lots, area };
+    const sheets = groups.reduce((sum, g) => sum + g.sheets.length, 0);
+    return { lots, area, sheets };
   }, [groups]);
 
   const generatedLabel = generatedAt ? formatGeneratedAt(generatedAt) : "";
@@ -149,6 +158,7 @@ function LotReportContent() {
           </div>
 
           <span className="hidden whitespace-nowrap text-[12px] tabular-nums text-slate-500 sm:inline">
+            {grandTotals.sheets.toLocaleString()} survey plan{grandTotals.sheets === 1 ? "" : "s"} with{" "}
             {grandTotals.lots.toLocaleString()} lots · {formatArea(grandTotals.area)} sq.m.
           </span>
 
@@ -177,6 +187,7 @@ function LotReportContent() {
 
         {/* Totals line for mobile, shown under the title/button rows */}
         <p className="mt-1.5 whitespace-nowrap text-[11px] tabular-nums text-slate-500 sm:hidden">
+          {grandTotals.sheets.toLocaleString()} survey plan{grandTotals.sheets === 1 ? "" : "s"} with{" "}
           {grandTotals.lots.toLocaleString()} lots · {formatArea(grandTotals.area)} sq.m.
         </p>
       </div>
