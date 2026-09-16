@@ -115,6 +115,26 @@
 // of 6 — no more need for the 3x2 grid a 6th standalone tab would've
 // required.
 //
+// TAB STRIP OVERFLOW FIX: each tab button is `flex-1` inside the strip so
+// all 5 share the row evenly, but a plain `flex-1` item's minimum width
+// defaults to its content's natural size — it won't actually shrink below
+// that, so `truncate` on the label never gets a chance to fire. With 5
+// tabs (some carrying an icon + label + count badge), that pushed the
+// widest button (Class / Type, with the longest label) past its share of
+// the row and made it visually overlap/clip against its neighbors, which
+// is the bug reported against the previous version. Two changes fix this
+// for good instead of just for this specific label:
+//   1. `min-w-0` on every tab button lets it actually shrink to fit,
+//      which is what makes `truncate` effective.
+//   2. `overflow-hidden` on the strip itself is a hard backstop so even
+//      an unexpectedly long label (e.g. from a future tab) clips cleanly
+//      inside the pill instead of spilling into neighboring tabs.
+// On top of that, the classAndType tab's on-strip label was shortened to
+// "Class" (the two section headers inside the tab panel -- "Classification"
+// and "Survey Plan Type" -- are unchanged and still fully spelled out), which
+// gives the count-badge tabs more breathing room on narrow phone widths
+// without needing to shrink type size further.
+//
 // SECTION HEADERS: each facet section (Classification, Survey Plan Type, and
 // also CENRO/Municipality/Barangay/Year's single section) now scrolls
 // together with its checkbox list inside the same scrollable panel,
@@ -159,14 +179,19 @@ interface FacetDef {
   // Section header shown above this facet's checkbox list. For
   // single-facet tabs this is the only header in the tab (equivalent to
   // the old `fullLabel`); for classAndType it's what distinguishes the
-  // two stacked sections from each other.
+  // two stacked sections from each other. Kept fully spelled out even
+  // though the on-strip tab label below is shortened, since there's no
+  // width pressure once you're inside the panel.
   sectionLabel: string;
   icon: typeof Landmark;
 }
 
 interface TabDef {
   id: TabId;
-  // Short label shown on the tab button itself.
+  // Short label shown on the tab button itself. Kept intentionally brief
+  // (see TAB STRIP OVERFLOW FIX note above) since this is the one place
+  // width is actually tight -- five buttons, some with count badges, all
+  // sharing one row.
   label: string;
   // Icon shown on the tab button itself.
   icon: typeof Landmark;
@@ -203,7 +228,10 @@ const TABS: TabDef[] = [
   },
   {
     id: "classAndType",
-    label: "Class / Type",
+    // Shortened from "Class / Type" -- see TAB STRIP OVERFLOW FIX note.
+    // The two section headers inside the panel (Classification, Survey
+    // Plan Type) stay fully spelled out; only this on-strip label changed.
+    label: "Class",
     icon: Scale,
     facets: [
       { key: "classifications", queryParam: "classifications", sectionLabel: "Classification", icon: Scale },
@@ -282,6 +310,12 @@ export default function ProjectionModal({
   const { theme, vars } = useSidebarTheme();
   const [mounted, setMounted] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>("cenros");
+  // Which tab's custom tooltip is currently visible, if any. Native
+  // `title` tooltips look like a stray OS popup that clashes with the
+  // rest of the themed UI, so tab labels get a small themed tooltip
+  // instead -- shown on hover (mouse) and focus (keyboard), driven off
+  // this bit of state rather than the browser's own tooltip.
+  const [hoveredTab, setHoveredTab] = useState<TabId | null>(null);
   const [selected, setSelected] = useState<SelectedMap>(emptySelected());
   const [options, setOptions] = useState<Record<FacetKey, TreeNodeData[] | null>>({
     cenros: null,
@@ -372,6 +406,14 @@ export default function ProjectionModal({
       }
       return { ...prev, [facetKey]: next };
     });
+  }
+
+  function clearFacet(facetKey: FacetKey) {
+    setSelected((prev) => ({ ...prev, [facetKey]: new Map() }));
+  }
+
+  function clearAll() {
+    setSelected(emptySelected());
   }
 
   const totalSelectedCount =
@@ -503,6 +545,15 @@ export default function ProjectionModal({
         <div className="flex flex-shrink-0 items-center gap-2 px-4 py-3" style={{ borderBottom: `1px solid ${hairline}` }}>
           <Filter size={15} style={{ color: theme.accent }} />
           <h2 className="flex-1 text-[13.5px] font-bold text-[var(--sb-text)]">Project layers</h2>
+          {totalSelectedCount > 0 && (
+            <button
+              type="button"
+              onClick={clearAll}
+              className="flex-shrink-0 rounded-full border-0 bg-transparent px-2 py-1 text-[10.5px] font-semibold text-[var(--sb-text-faint)] hover:text-[var(--sb-text)]"
+            >
+              Clear all
+            </button>
+          )}
           <button
             type="button"
             onClick={onClose}
@@ -516,46 +567,106 @@ export default function ProjectionModal({
           Pick any combination across the tabs below. Project applies the combined filter to the map; Generate Report opens a printable report in a new tab.
         </p>
 
-        {/* Tabs — back to a single row of 5 (Class/Type merged into one
-            tab, see file-top note), so this is the same pill-strip shape
-            used before Survey Plan Type existed. */}
-        <div className="mx-3 mt-3 flex flex-shrink-0 items-center gap-1 rounded-full bg-[var(--sb-hover)] p-1 sm:mx-4">
+        {/* Tabs — single row of 5 (Class/Type merged into one tab, see
+            file-top note). `min-w-0` on each button is what lets a button
+            actually shrink and hand truncation duty to `truncate` on the
+            label instead of overflowing its share of the row; `overflow-
+            hidden` on the strip is the backstop that keeps any overflow
+            from spilling into neighboring tabs. See TAB STRIP OVERFLOW
+            FIX note at the top of the file for the full story.
+
+            Each tab shows a small themed tooltip with its full label on
+            hover/focus (see `hoveredTab` state above) instead of relying
+            on the browser's native `title` tooltip, which renders as a
+            plain OS popup that looks out of place next to the rest of
+            the themed dialog. The tooltip is positioned with a simple
+            `relative` wrapper + `absolute` bubble (no portal needed --
+            it only ever needs to escape the tab button, not the whole
+            sidebar, so it isn't at risk of the clipping that the modal
+            itself uses createPortal to avoid). Colors are inverted
+            relative to the dialog (bg uses --sb-text, text uses --sb-bg)
+            which is the classic "dark chip on light UI / light chip on
+            dark UI" tooltip look and reads as clearly different chrome
+            from the tab strip itself. */}
+        <div className="relative mx-3 mt-3 flex flex-shrink-0 items-center gap-1 overflow-visible rounded-full bg-[var(--sb-hover)] p-1 sm:mx-4">
           {TABS.map((tab) => {
             const count = tab.facets.reduce((sum, f) => sum + selected[f.key].size, 0);
+            const isActive = activeTab === tab.id;
+            const isHovered = hoveredTab === tab.id;
             const Icon = tab.icon;
             return (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setActiveTab(tab.id)}
-                className={`flex flex-1 items-center justify-center gap-1 rounded-full border-0 px-1 py-[6px] text-[9px] font-semibold transition-colors duration-100 sm:px-1.5 sm:text-[10px] ${
-                  activeTab === tab.id
-                    ? "bg-[var(--sb-bg)] text-[var(--sb-accent)] shadow-sm"
-                    : "bg-transparent text-[var(--sb-text-muted)] hover:text-[var(--sb-text)]"
-                }`}
-              >
-                <Icon size={12} className="flex-shrink-0" />
-                <span className="truncate">{tab.label}</span>
-                {count > 0 && (
-                  <span
-                    className={`flex h-4 min-w-4 flex-shrink-0 items-center justify-center rounded-full px-1 text-[9px] font-bold tabular-nums ${
-                      activeTab === tab.id ? "bg-[var(--sb-accent)] text-white" : "bg-[var(--sb-border)] text-[var(--sb-text-muted)]"
-                    }`}
+              <div key={tab.id} className="relative min-w-0 flex-1">
+                {isHovered && (
+                  <div
+                    role="tooltip"
+                    className="pointer-events-none absolute bottom-full left-1/2 z-[220] mb-2 -translate-x-1/2 whitespace-nowrap rounded-[7px] px-2 py-1 text-[10.5px] font-semibold shadow-lg"
+                    style={{
+                      background: "var(--sb-text)",
+                      color: "var(--sb-bg)",
+                      animation: "sb-tooltip-in 100ms ease-out",
+                    }}
                   >
-                    {count}
-                  </span>
+                    {tab.label}
+                    <div
+                      className="absolute left-1/2 top-full h-0 w-0 -translate-x-1/2"
+                      style={{
+                        borderLeft: "4px solid transparent",
+                        borderRight: "4px solid transparent",
+                        borderTop: "4px solid var(--sb-text)",
+                      }}
+                    />
+                  </div>
                 )}
-              </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab(tab.id)}
+                  onMouseEnter={() => setHoveredTab(tab.id)}
+                  onMouseLeave={() => setHoveredTab((cur) => (cur === tab.id ? null : cur))}
+                  onFocus={() => setHoveredTab(tab.id)}
+                  onBlur={() => setHoveredTab((cur) => (cur === tab.id ? null : cur))}
+                  aria-selected={isActive}
+                  className={`flex w-full min-w-0 items-center justify-center gap-1 rounded-full border-0 px-1 py-[6px] text-[9px] font-semibold transition-colors duration-100 sm:px-1.5 sm:text-[10px] ${
+                    isActive
+                      ? "bg-[var(--sb-bg)] text-[var(--sb-accent)] shadow-sm"
+                      : "bg-transparent text-[var(--sb-text-muted)] hover:text-[var(--sb-text)]"
+                  }`}
+                >
+                  <Icon size={12} className="flex-shrink-0" />
+                  <span className="min-w-0 truncate">{tab.label}</span>
+                  {count > 0 && (
+                    <span
+                      className={`flex h-4 min-w-4 flex-shrink-0 items-center justify-center rounded-full px-1 text-[9px] font-bold tabular-nums ${
+                        isActive ? "bg-[var(--sb-accent)] text-white" : "bg-[var(--sb-border)] text-[var(--sb-text-muted)]"
+                      }`}
+                    >
+                      {count}
+                    </span>
+                  )}
+                </button>
+              </div>
             );
           })}
+          <style jsx>{`
+            @keyframes sb-tooltip-in {
+              from {
+                opacity: 0;
+                transform: translate(-50%, 2px);
+              }
+              to {
+                opacity: 1;
+                transform: translate(-50%, 0);
+              }
+            }
+          `}</style>
         </div>
 
         {/* Active tab's section(s) — every facet in the active tab renders
-            its own header (section label + select-all) followed by its
-            checkbox list, all inside ONE scrollable region so the dialog's
-            outer height never changes with content. Single-facet tabs
-            (CENRO/Municipality/Barangay/Year) render exactly one section
-            here; Class/Type renders two stacked back to back. */}
+            its own header (section label + select-all/clear) followed by
+            its checkbox list, all inside ONE scrollable region so the
+            dialog's outer height never changes with content. Single-facet
+            tabs (CENRO/Municipality/Barangay/Year) render exactly one
+            section here; Class/Type renders two stacked back to back,
+            separated by a hairline divider for a clearer visual break. */}
         <div className="mt-2.5 min-h-0 flex-1 overflow-y-auto px-2 pb-2">
           {activeTabDef.facets.map((facet, i) => {
             const opts = options[facet.key];
@@ -563,20 +674,35 @@ export default function ProjectionModal({
             const allChecked = !!opts && opts.length > 0 && opts.every((o) => selMap.has(String(o.id)));
             const Icon = facet.icon;
             return (
-              <div key={facet.key} className={i > 0 ? "mt-3" : undefined}>
-                <div className="mb-1 flex items-center justify-between px-1.5 sm:px-2">
-                  <span className="text-[10px] font-bold uppercase tracking-wide text-[var(--sb-text-faint)]">
+              <div
+                key={facet.key}
+                className={i > 0 ? "mt-3 border-t pt-3" : undefined}
+                style={i > 0 ? { borderColor: hairline } : undefined}
+              >
+                <div className="mb-1 flex items-center justify-between gap-2 px-1.5 sm:px-2">
+                  <span className="truncate text-[10px] font-bold uppercase tracking-wide text-[var(--sb-text-faint)]">
                     {facet.sectionLabel}
                   </span>
-                  {opts && opts.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => toggleSelectAll(facet.key)}
-                      className="border-0 bg-transparent p-0 text-[10.5px] font-semibold text-[var(--sb-accent)] hover:opacity-70"
-                    >
-                      {allChecked ? "Clear all" : "Select all"}
-                    </button>
-                  )}
+                  <div className="flex flex-shrink-0 items-center gap-2">
+                    {selMap.size > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => clearFacet(facet.key)}
+                        className="border-0 bg-transparent p-0 text-[10.5px] font-semibold text-[var(--sb-text-faint)] hover:text-[var(--sb-text)]"
+                      >
+                        Clear
+                      </button>
+                    )}
+                    {opts && opts.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => toggleSelectAll(facet.key)}
+                        className="border-0 bg-transparent p-0 text-[10.5px] font-semibold text-[var(--sb-accent)] hover:opacity-70"
+                      >
+                        {allChecked ? "Deselect all" : "Select all"}
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {opts === null && (
@@ -597,6 +723,7 @@ export default function ProjectionModal({
                       key={item.id}
                       onClick={() => toggleItem(facet.key, item)}
                       className="mb-0.5 flex cursor-pointer items-center gap-2 rounded-[9px] px-1.5 py-[7px] transition-colors duration-100 hover:bg-[var(--sb-hover)]"
+                      style={checked ? { background: "color-mix(in srgb, var(--sb-accent) 10%, transparent)" } : undefined}
                     >
                       <ItemCheckbox checked={checked} onChange={() => toggleItem(facet.key, item)} />
                       <Icon size={13} className="flex-shrink-0 text-[var(--sb-text-faint)]" />
