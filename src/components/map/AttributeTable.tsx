@@ -201,7 +201,7 @@ function matchesLotQuery(f: LotFeature, query: string): boolean {
 }
 
 // Filled-state chip for a saved external link (Plan / Documents). Same
-// pill shape/size as the empty-state "Add link" trigger below it renders
+// pill shape/size as the empty-state "Add" trigger below it renders
 // in place of, so a column reads as one consistent chip regardless of
 // whether the sheet has a value yet.
 function PlanLink({ url, stopPropagation, label }: { url: string; stopPropagation?: boolean; label: string }) {
@@ -457,14 +457,22 @@ function Checkbox({
 // only renders once something is actually selected instead of reserving
 // space with `color: transparent` (a trick that's fine on desktop but
 // wastes width on narrow screens).
+//
+// Reused for BOTH the lot-level color toolbar (checkboxes on individual
+// lot rows, inside a sheet or search results) AND the new sheet-level
+// color toolbar below (checkboxes on whole sheets, from the sheets list)
+// — same shape/behavior either way, just fed a different selected count
+// and a different apply-color callback.
 function ColorToolbar({
   selectedCount,
   onApplyColor,
   onDeselectAll,
+  idleLabel = "Tap lots to color",
 }: {
   selectedCount: number;
   onApplyColor: (color: string | null) => void;
   onDeselectAll: () => void;
+  idleLabel?: string;
 }) {
   const enabled = selectedCount > 0;
   return (
@@ -473,7 +481,7 @@ function ColorToolbar({
         className="flex-shrink-0 whitespace-nowrap text-[11px] font-medium tabular-nums"
         style={{ color: enabled ? "var(--sb-accent-text)" : "var(--sb-text-faint)" }}
       >
-        {enabled ? `${selectedCount} selected` : "Tap lots to color"}
+        {enabled ? `${selectedCount} selected` : idleLabel}
       </span>
 
       <div
@@ -496,7 +504,7 @@ function ColorToolbar({
             <input type="color" onChange={(e) => onApplyColor(e.target.value)} className="sr-only" />
           </label>
         </Tooltip>
-        <Tooltip label="Remove color from selected lots">
+        <Tooltip label="Remove color from selected">
           <button
             type="button"
             onClick={() => onApplyColor(null)}
@@ -515,6 +523,100 @@ function ColorToolbar({
         >
           Deselect
         </button>
+      )}
+    </div>
+  );
+}
+
+// Lets you set (or clear) the color for every lot on a sheet in one
+// click, from the sheets list — without drilling into the sheet and
+// multi-selecting every lot individually. Shows a filled swatch if every
+// lot on the sheet already shares one color, a dashed empty ring if none
+// of them have a color yet, or a dashed ring with a dot if the sheet's
+// lots currently have mixed colors. Clicking opens the same
+// preset/custom/clear palette as the multi-select ColorToolbar, applied
+// to every lot on the sheet at once.
+//
+// This stays as the fast one-off path for a SINGLE sheet. The new
+// checkbox column + toolbar below (see sheetColorSelectedKeys in the main
+// component) is the complementary BATCH path for coloring many sheets at
+// once (e.g. every sheet that shows up after filtering to RFPA) — the two
+// don't conflict, since this swatch always applies immediately to just
+// its own row regardless of what's checked elsewhere.
+function SheetColorSwatch({
+  lotIds,
+  currentColor,
+  mixed,
+  onApplyColor,
+}: {
+  lotIds: Array<string | number>;
+  currentColor: string | null;
+  mixed: boolean;
+  onApplyColor: (lotIds: Array<string | number>, color: string | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  function apply(color: string | null) {
+    onApplyColor(lotIds, color);
+    setOpen(false);
+  }
+
+  return (
+    <div className="relative inline-flex" onClick={(e) => e.stopPropagation()}>
+      <Tooltip
+        label={
+          mixed
+            ? "Lots have different colors — click to set one color for all"
+            : "Color every lot on this sheet"
+        }
+      >
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full ring-1 ring-inset ring-black/10 transition-transform hover:scale-110"
+          style={{
+            background: currentColor && !mixed ? currentColor : "transparent",
+            border: !currentColor || mixed ? "1.5px dashed var(--sb-text-faint)" : undefined,
+          }}
+        >
+          {mixed && <span className="h-2 w-2 rounded-full" style={{ background: "var(--sb-text-faint)" }} />}
+        </button>
+      </Tooltip>
+
+      {open && (
+        <>
+          <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} />
+          <div
+            className="absolute left-0 top-full z-30 mt-1 flex items-center gap-1.5 rounded-lg border p-1.5 shadow-lg"
+            style={{ background: "var(--sb-bg-elevated)", borderColor: HAIRLINE }}
+          >
+            {COLOR_PRESETS.map((c) => (
+              <Tooltip key={c.value} label={c.label}>
+                <button
+                  type="button"
+                  onClick={() => apply(c.value)}
+                  className="h-[18px] w-[18px] flex-shrink-0 rounded-full shadow-sm ring-1 ring-inset ring-black/10 transition-transform hover:scale-110"
+                  style={{ background: c.value }}
+                />
+              </Tooltip>
+            ))}
+            <Tooltip label="Custom color">
+              <label className="flex h-[18px] w-[18px] flex-shrink-0 cursor-pointer items-center justify-center rounded-full border border-dashed border-[var(--sb-text-faint)] text-[var(--sb-text-faint)]">
+                <Palette size={9} />
+                <input type="color" onChange={(e) => apply(e.target.value)} className="sr-only" />
+              </label>
+            </Tooltip>
+            <Tooltip label="Clear color">
+              <button
+                type="button"
+                onClick={() => apply(null)}
+                className="flex h-[18px] w-[18px] flex-shrink-0 items-center justify-center rounded-full text-[var(--sb-text-faint)] hover:text-[var(--sb-text)]"
+              >
+                <X size={11} />
+              </button>
+            </Tooltip>
+          </div>
+        </>
       )}
     </div>
   );
@@ -544,6 +646,12 @@ export default function AttributeTable({
   const [searchQuery, setSearchQuery] = useState("");
   const normalizedQuery = searchQuery.trim().toLowerCase();
   const [colorSelectedIds, setColorSelectedIds] = useState<Set<string>>(new Set());
+
+  // Sheet-level equivalent of colorSelectedIds above, keyed by SheetGroup
+  // key (not lot id) — checking a sheet in the sheets-list view means
+  // "apply the next color pick to every lot on this sheet", not to the
+  // sheet row itself (sheets don't have their own color; only lots do).
+  const [sheetColorSelectedKeys, setSheetColorSelectedKeys] = useState<Set<string>>(new Set());
 
   const searchResults = useMemo(() => {
     if (!normalizedQuery) return null;
@@ -623,6 +731,24 @@ export default function AttributeTable({
     });
   }, [features]);
 
+  // Same pruning idea as colorSelectedIds above, but keyed against
+  // sheetGroups instead of features — a checked sheet that no longer
+  // exists in the current filter/selection (e.g. the Projection changed)
+  // gets dropped instead of lingering as a phantom selection.
+  useEffect(() => {
+    setSheetColorSelectedKeys((prev) => {
+      if (prev.size === 0) return prev;
+      const validKeys = new Set(sheetGroups.map((g) => g.key));
+      let changed = false;
+      const next = new Set<string>();
+      prev.forEach((k) => {
+        if (validKeys.has(k)) next.add(k);
+        else changed = true;
+      });
+      return changed ? next : prev;
+    });
+  }, [sheetGroups]);
+
   function toggleColorSelect(id: string) {
     setColorSelectedIds((prev) => {
       const next = new Set(prev);
@@ -649,6 +775,36 @@ export default function AttributeTable({
   function applyColor(color: string | null) {
     if (!onSetLotColors || colorSelectedIds.size === 0) return;
     onSetLotColors(Array.from(colorSelectedIds), color);
+  }
+
+  function toggleSheetColorSelect(key: string) {
+    setSheetColorSelectedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function toggleSheetColorSelectAll() {
+    const allKeys = sheetGroups.map((g) => g.key);
+    const allSelected = allKeys.length > 0 && allKeys.every((k) => sheetColorSelectedKeys.has(k));
+    setSheetColorSelectedKeys(allSelected ? new Set() : new Set(allKeys));
+  }
+
+  // The actual feature: bulk-apply one color to every lot across every
+  // CHECKED sheet in a single call — e.g. Project to RFPA, check every
+  // sheet that shows up, pick a color once, instead of opening each sheet
+  // and multi-selecting its lots individually.
+  function applySheetColor(color: string | null) {
+    if (!onSetLotColors || sheetColorSelectedKeys.size === 0) return;
+    const ids: Array<string | number> = [];
+    for (const g of sheetGroups) {
+      if (sheetColorSelectedKeys.has(g.key)) {
+        for (const f of g.lots) ids.push(f.id);
+      }
+    }
+    onSetLotColors(ids, color);
   }
 
   const expandedSheet = expandedSheetKey ? sheetGroups.find((g) => g.key === expandedSheetKey) ?? null : null;
@@ -800,6 +956,31 @@ export default function AttributeTable({
             selectedCount={colorSelectedIds.size}
             onApplyColor={applyColor}
             onDeselectAll={() => setColorSelectedIds(new Set())}
+            idleLabel="Tap lots to color"
+          />
+        </div>
+      )}
+
+      {/*
+        Sheet-level color toolbar — only shown in the plain sheets-list
+        view (not while searching or drilled into a sheet, which already
+        have their own lot-level toolbar above) and only once at least one
+        sheet is checked, so it doesn't take up space otherwise. Reuses
+        the same ColorToolbar component as the lot-level one above; the
+        only difference is what "selected" means (whole sheets, via
+        sheetColorSelectedKeys) and what applying a color does
+        (applySheetColor colors every lot on every checked sheet at once).
+      */}
+      {!isSearching && !expandedSheet && sheetColorSelectedKeys.size > 0 && (
+        <div
+          className="flex flex-shrink-0 flex-wrap items-center gap-3 px-3 py-2"
+          style={{ borderBottom: `1px solid ${HAIRLINE}`, background: "var(--sb-hover)" }}
+        >
+          <ColorToolbar
+            selectedCount={sheetColorSelectedKeys.size}
+            onApplyColor={applySheetColor}
+            onDeselectAll={() => setSheetColorSelectedKeys(new Set())}
+            idleLabel="Check sheets to color"
           />
         </div>
       )}
@@ -824,6 +1005,11 @@ export default function AttributeTable({
         the bottom — and vertical scrolling of rows still works
         independently inside it. The redundant inner `overflow-x-auto`
         wrappers were removed from SheetsTable and LotsTable below.
+
+        Explicit `touchAction` hints (added in the same pass) tell the
+        browser upfront which axis each region owns, so a horizontal drag
+        on the table is recognized immediately instead of the touch
+        gesture defaulting to page scroll.
       */}
       <div
         className="min-h-0 flex-1 overflow-x-auto overflow-y-hidden"
@@ -871,6 +1057,11 @@ export default function AttributeTable({
               onUpdateSurveyNo={onUpdateSurveyNo}
               onUpdateDocumentsUrl={onUpdateDocumentsUrl}
               onUpdateSurveyClass={onUpdateSurveyClass}
+              lotColors={lotColors}
+              onSetLotColors={onSetLotColors}
+              colorSelectedKeys={sheetColorSelectedKeys}
+              onToggleColorSelect={toggleSheetColorSelect}
+              onToggleColorSelectAll={toggleSheetColorSelectAll}
             />
           )}
         </div>
@@ -923,6 +1114,11 @@ function SheetsTable({
   onUpdateSurveyNo,
   onUpdateDocumentsUrl,
   onUpdateSurveyClass,
+  lotColors,
+  onSetLotColors,
+  colorSelectedKeys,
+  onToggleColorSelect,
+  onToggleColorSelectAll,
 }: {
   groups: SheetGroup[];
   onOpenSheet: (key: string) => void;
@@ -931,7 +1127,20 @@ function SheetsTable({
   onUpdateSurveyNo?: (sheetId: number, surveyNo: string) => Promise<void>;
   onUpdateDocumentsUrl?: (sheetId: number, documentsUrl: string) => Promise<void>;
   onUpdateSurveyClass?: (sheetId: number, surveyClass: "admin" | "private") => Promise<void>;
+  lotColors?: Record<string, string>;
+  onSetLotColors?: (lotIds: Array<string | number>, color: string | null) => void;
+  // Batch color-select state — a checked sheet means "include every lot
+  // on this sheet the next time a color is applied from the toolbar
+  // above", same purpose as colorSelectedIds/onToggleColorSelect in
+  // LotsTable below, just scoped to whole sheets instead of individual
+  // lots. Kept separate from the per-row SheetColorSwatch (Color column),
+  // which still applies a color immediately to just its own sheet.
+  colorSelectedKeys: Set<string>;
+  onToggleColorSelect: (key: string) => void;
+  onToggleColorSelectAll: () => void;
 }) {
+  const allSelected = groups.length > 0 && groups.every((g) => colorSelectedKeys.has(g.key));
+
   // MOBILE PASS (scroll fix): horizontal scrolling is now owned by the
   // grandparent wrapper in AttributeTable, so this no longer wraps itself
   // in its own `overflow-x-auto` div — that second scroll region was what
@@ -939,9 +1148,22 @@ function SheetsTable({
   // the visible viewport. `min-w` on the table itself is unchanged and
   // still what forces horizontal scroll to kick in on narrow screens.
   return (
-    <table className="w-full min-w-[880px] border-collapse text-[11.5px]">
+    <table className="w-full min-w-[920px] border-collapse text-[11.5px]">
       <thead>
         <tr>
+          <th
+            className="sticky top-0 z-10 w-9 px-2.5 py-[7px] backdrop-blur sm:w-7"
+            style={{
+              background: "color-mix(in srgb, var(--sb-hover) 92%, transparent)",
+              borderBottom: `1px solid ${HAIRLINE}`,
+            }}
+          >
+            <Tooltip label={allSelected ? "Deselect all sheets" : "Select all sheets"}>
+              <Checkbox checked={allSelected} onChange={onToggleColorSelectAll} />
+            </Tooltip>
+          </th>
+          
+          <Th>Color</Th>
           <Th>Sheet No.</Th>
           <Th>Municipality</Th>
           <Th>Province</Th>
@@ -956,122 +1178,152 @@ function SheetsTable({
         </tr>
       </thead>
       <tbody>
-        {groups.map((g, i) => (
-          <tr
-            key={g.key}
-            onClick={() => onOpenSheet(g.key)}
-            title="Click to view lots"
-            className="cursor-pointer transition-colors duration-100"
-            style={{
-              borderBottom: `1px solid ${HAIRLINE_SOFT}`,
-              background: i % 2 === 1 ? "color-mix(in srgb, var(--sb-hover) 45%, transparent)" : "transparent",
-            }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = "var(--sb-hover)")}
-            onMouseLeave={(e) =>
-              (e.currentTarget.style.background =
-                i % 2 === 1 ? "color-mix(in srgb, var(--sb-hover) 45%, transparent)" : "transparent")
-            }
-          >
-            <td className="px-2.5 py-[6px] font-medium text-[var(--sb-text)]">{g.sheetNo}</td>
-            <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{g.municipality || "—"}</td>
-            <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{g.province || "—"}</td>
-            <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]" onClick={(e) => e.stopPropagation()}>
-              {g.planUrl ? (
-                <PlanLink url={g.planUrl} label="View" />
-              ) : g.sheetId != null && onUpdatePlanUrl ? (
-                <InlineFieldControl
-                  sheetId={g.sheetId}
-                  kind="url"
-                  triggerLabel="Add link"
-                  tooltip="Add a Google Drive link to this sheet's plan"
-                  placeholder="Paste Google Drive link…"
-                  inputWidth={168}
-                  validate={(v) => (isTraceableGoogleDriveLink(v) ? null : PLAN_LINK_HELP_MESSAGE)}
-                  onSave={onUpdatePlanUrl}
-                />
-              ) : (
-                "—"
-              )}
-            </td>
-            <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]" onClick={(e) => e.stopPropagation()}>
-              {g.documentsUrl ? (
-                <PlanLink url={g.documentsUrl} label="View" />
-              ) : g.sheetId != null && onUpdateDocumentsUrl ? (
-                <InlineFieldControl
-                  sheetId={g.sheetId}
-                  kind="url"
-                  triggerLabel="Add link"
-                  tooltip="Add a Google Drive link to this sheet's documents"
-                  placeholder="Paste Google Drive link…"
-                  inputWidth={168}
-                  validate={(v) => (isTraceableGoogleDriveLink(v) ? null : PLAN_LINK_HELP_MESSAGE)}
-                  onSave={onUpdateDocumentsUrl}
-                />
-              ) : (
-                "—"
-              )}
-            </td>
-            <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]" onClick={(e) => e.stopPropagation()}>
-              <span className="inline-flex flex-wrap items-center gap-1.5">
-                {g.surveyNo ? <span className="text-[var(--sb-text)]">{g.surveyNo}</span> : null}
-                {!g.surveyNo && g.sheetId != null && onUpdateSurveyNo ? (
+        {groups.map((g, i) => {
+          const isChecked = colorSelectedKeys.has(g.key);
+          const baseBg = isChecked
+            ? "var(--sb-accent-bg)"
+            : i % 2 === 1
+              ? "color-mix(in srgb, var(--sb-hover) 45%, transparent)"
+              : "transparent";
+          return (
+            <tr
+              key={g.key}
+              onClick={() => onOpenSheet(g.key)}
+              title="Click to view lots"
+              className="cursor-pointer transition-colors duration-100"
+              style={{
+                borderBottom: `1px solid ${HAIRLINE_SOFT}`,
+                background: baseBg,
+              }}
+              onMouseEnter={(e) => {
+                if (isChecked) return;
+                e.currentTarget.style.background = "var(--sb-hover)";
+              }}
+              onMouseLeave={(e) => (e.currentTarget.style.background = baseBg)}
+            >
+              <td className="px-2.5 py-[6px]" onClick={(e) => e.stopPropagation()}>
+                <Checkbox checked={isChecked} onChange={() => onToggleColorSelect(g.key)} />
+              </td>
+                            <td className="px-2.5 py-[6px]" onClick={(e) => e.stopPropagation()}>
+                {onSetLotColors
+                  ? (() => {
+                      const lotIds = g.lots.map((f) => f.id);
+                      const colorsOnSheet = lotColors
+                        ? Array.from(new Set(g.lots.map((f) => lotColors[String(f.id)]).filter(Boolean)))
+                        : [];
+                      return (
+                        <SheetColorSwatch
+                          lotIds={lotIds}
+                          currentColor={colorsOnSheet.length === 1 ? colorsOnSheet[0] : null}
+                          mixed={colorsOnSheet.length > 1}
+                          onApplyColor={onSetLotColors}
+                        />
+                      );
+                    })()
+                  : "—"}
+              </td>
+              <td className="px-2.5 py-[6px] font-medium text-[var(--sb-text)]">{g.sheetNo}</td>
+
+              <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{g.municipality || "—"}</td>
+              <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{g.province || "—"}</td>
+              <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]" onClick={(e) => e.stopPropagation()}>
+                {g.planUrl ? (
+                  <PlanLink url={g.planUrl} label="View" />
+                ) : g.sheetId != null && onUpdatePlanUrl ? (
                   <InlineFieldControl
                     sheetId={g.sheetId}
-                    kind="text"
-                    triggerLabel="Add survey no."
-                    tooltip="Set survey number"
-                    placeholder="Survey number…"
-                    inputWidth={120}
-                    onSave={onUpdateSurveyNo}
+                    kind="url"
+                    triggerLabel="Add"
+                    tooltip="Add a Google Drive link to this sheet's plan"
+                    placeholder="Paste Google Drive link…"
+                    inputWidth={168}
+                    validate={(v) => (isTraceableGoogleDriveLink(v) ? null : PLAN_LINK_HELP_MESSAGE)}
+                    onSave={onUpdatePlanUrl}
                   />
-                ) : !g.surveyNo ? (
+                ) : (
                   "—"
-                ) : null}
-              </span>
-            </td>
-            <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]" onClick={(e) => e.stopPropagation()}>
-              {g.surveyClass ? (
-                <SurveyClassBadge value={g.surveyClass} />
-              ) : g.sheetId != null && onUpdateSurveyClass ? (
-                <InlineFieldControl
-                  sheetId={g.sheetId}
-                  kind="select"
-                  triggerLabel="Set class"
-                  tooltip="Set this sheet's survey class (admin or private)"
-                  selectOptions={SURVEY_CLASS_OPTIONS}
-                  onSave={(sheetId, value) => onUpdateSurveyClass(sheetId, value as "admin" | "private")}
-                />
-              ) : (
-                "—"
-              )}
-            </td>
-            <td className="px-2.5 py-[6px] text-right tabular-nums text-[var(--sb-text-muted)]">{g.lots.length}</td>
-            <td className="px-2.5 py-[6px] text-right tabular-nums text-[var(--sb-text-muted)]">
-              {formatArea(g.totalArea)}
-            </td>
-            <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{g.encodedBy || "—"}</td>
-            {onViewSheet && (
-              <td className="px-2.5 py-[6px]" onClick={(e) => e.stopPropagation()}>
-                <Tooltip label="Preview whole sheet — all lots + coordinates">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      onViewSheet({
-                        sheetNo: g.sheetNo,
-                        province: g.province,
-                        municipality: g.municipality,
-                        lots: g.lots,
-                      })
-                    }
-                    className="flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded-[7px] border-0 bg-[var(--sb-accent-bg)] p-0 text-[var(--sb-accent)] transition-colors duration-100 hover:opacity-75"
-                  >
-                    <Eye size={12} />
-                  </button>
-                </Tooltip>
+                )}
               </td>
-            )}
-          </tr>
-        ))}
+              <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]" onClick={(e) => e.stopPropagation()}>
+                {g.documentsUrl ? (
+                  <PlanLink url={g.documentsUrl} label="View" />
+                ) : g.sheetId != null && onUpdateDocumentsUrl ? (
+                  <InlineFieldControl
+                    sheetId={g.sheetId}
+                    kind="url"
+                    triggerLabel="Add"
+                    tooltip="Add a Google Drive link to this sheet's documents"
+                    placeholder="Paste Google Drive link…"
+                    inputWidth={168}
+                    validate={(v) => (isTraceableGoogleDriveLink(v) ? null : PLAN_LINK_HELP_MESSAGE)}
+                    onSave={onUpdateDocumentsUrl}
+                  />
+                ) : (
+                  "—"
+                )}
+              </td>
+              <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]" onClick={(e) => e.stopPropagation()}>
+                <span className="inline-flex flex-wrap items-center gap-1.5">
+                  {g.surveyNo ? <span className="text-[var(--sb-text)]">{g.surveyNo}</span> : null}
+                  {!g.surveyNo && g.sheetId != null && onUpdateSurveyNo ? (
+                    <InlineFieldControl
+                      sheetId={g.sheetId}
+                      kind="text"
+                      triggerLabel="Add"
+                      tooltip="Set survey number"
+                      placeholder="Survey number…"
+                      inputWidth={120}
+                      onSave={onUpdateSurveyNo}
+                    />
+                  ) : !g.surveyNo ? (
+                    "—"
+                  ) : null}
+                </span>
+              </td>
+              <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]" onClick={(e) => e.stopPropagation()}>
+                {g.surveyClass ? (
+                  <SurveyClassBadge value={g.surveyClass} />
+                ) : g.sheetId != null && onUpdateSurveyClass ? (
+                  <InlineFieldControl
+                    sheetId={g.sheetId}
+                    kind="select"
+                    triggerLabel="Set class"
+                    tooltip="Set this sheet's survey class (admin or private)"
+                    selectOptions={SURVEY_CLASS_OPTIONS}
+                    onSave={(sheetId, value) => onUpdateSurveyClass(sheetId, value as "admin" | "private")}
+                  />
+                ) : (
+                  "—"
+                )}
+              </td>
+              <td className="px-2.5 py-[6px] text-right tabular-nums text-[var(--sb-text-muted)]">{g.lots.length}</td>
+              <td className="px-2.5 py-[6px] text-right tabular-nums text-[var(--sb-text-muted)]">
+                {formatArea(g.totalArea)}
+              </td>
+              <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{g.encodedBy || "—"}</td>
+              {onViewSheet && (
+                <td className="px-2.5 py-[6px]" onClick={(e) => e.stopPropagation()}>
+                  <Tooltip label="Preview whole sheet — all lots + coordinates">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onViewSheet({
+                          sheetNo: g.sheetNo,
+                          province: g.province,
+                          municipality: g.municipality,
+                          lots: g.lots,
+                        })
+                      }
+                      className="flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded-[7px] border-0 bg-[var(--sb-accent-bg)] p-0 text-[var(--sb-accent)] transition-colors duration-100 hover:opacity-75"
+                    >
+                      <Eye size={12} />
+                    </button>
+                  </Tooltip>
+                </td>
+              )}
+            </tr>
+          );
+        })}
       </tbody>
     </table>
   );

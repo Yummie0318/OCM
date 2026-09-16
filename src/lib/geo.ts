@@ -55,6 +55,19 @@ export interface LotFeature {
     // only via control_point, with no legacy per-lot municipality FK set).
     cenroId: number | null;
     cenro: string | null;
+    // Same derivation as CLASSIFICATION_CASE_SQL in route.ts — RFPA/FPA
+    // derived from area_sqm vs. the municipality's (or its CENRO's)
+    // threshold via get_rfpa_threshold(). Null when the municipality has
+    // no rule at either level.
+    classification: "RFPA" | "FPA" | null;
+    classificationThreshold: number | null;
+    // Leading letter code parsed from survey_no (e.g. "CSD-AF-02-015244"
+    // -> "CSD", "Ccs-(af)-02-001378" -> "CCS"), derived the same way as
+    // PLAN_PREFIX_SQL in both route.ts files (uppercased, substring before
+    // the first non-letter character). Null when survey_no is missing,
+    // blank, or doesn't start with a letter — never guessed into a
+    // bucket, same treatment as classification's NULL case.
+    planPrefix: string | null;
   };
 }
 

@@ -1,10 +1,10 @@
 // Target path: src/app/api/map/lots/route.ts
 //
 // COMBINED FACET FILTER: ProjectionModal.tsx builds ONE combined filter-set
-// across everything checked in its 5 tabs (CENRO / Municipality / Barangay /
-// Year / Classification), ANDed together:
+// across everything checked in its 6 tabs (CENRO / Municipality / Barangay /
+// Year / Classification / Plan Type), ANDed together:
 //   cenro IN (...) AND municipality IN (...) AND barangay IN (...)
-//     AND year IN (...) AND classification IN (...)
+//     AND year IN (...) AND classification IN (...) AND prefix IN (...)
 // (any facet the user left empty is just omitted from the AND). This is
 // also the shape a future Excel export / printable report will reuse
 // directly against this same endpoint.
@@ -15,25 +15,37 @@
 //   &barangay_ids=12,40
 //   &years=2023,2024
 //   &classifications=RFPA,FPA
-// If ANY of these five params is present (even a single value), the request
+//   &prefixes=CSD,CCS
+// If ANY of these six params is present (even a single value), the request
 // is treated as a facet-filter request and the legacy single-select modes
 // below (id / sheet_id / single cenro_id / single municipality_id / single
 // barangay_id[+year] / surveyor_id) are skipped entirely -- the two modes
 // are mutually exclusive per request, same as the legacy modes always were
 // exclusive of each other. Legacy single-select requests have no way to
-// also filter by classification -- that's intentional for this pass; only
-// the new combined-facet path (ProjectionModal) supports it.
+// also filter by classification or prefix -- that's intentional; only the
+// combined-facet path (ProjectionModal) supports it.
 //
-// CLASSIFICATION (this pass): "classification" isn't a real column -- it's
-// derived per-lot from area_sqm vs. the threshold that applies to that
-// lot's municipality (a municipality-level override in
-// area_classification_rules if one exists, else its CENRO's default), via
-// the get_rfpa_threshold(municipality_id) SQL function. A lot is RFPA if
-// area_sqm <= that threshold, else FPA. A municipality with no rule at
-// either level makes get_rfpa_threshold() return NULL for its lots; those
-// lots are excluded whenever a classifications filter is active (never
-// silently counted as RFPA or FPA), and expose classification: null on the
-// feature otherwise.
+// CLASSIFICATION: "classification" isn't a real column -- it's derived per-lot
+// from area_sqm vs. the threshold that applies to that lot's municipality (a
+// municipality-level override in area_classification_rules if one exists,
+// else its CENRO's default), via the get_rfpa_threshold(municipality_id) SQL
+// function. A lot is RFPA if area_sqm <= that threshold, else FPA. A
+// municipality with no rule at either level makes get_rfpa_threshold()
+// return NULL for its lots; those lots are excluded whenever a
+// classifications filter is active (never silently counted as RFPA or FPA),
+// and expose classification: null on the feature otherwise.
+//
+// PLAN TYPE / PREFIX (this pass): "prefix" also isn't a real column -- it's
+// the leading letter code parsed off survey_no (e.g. "CSD-AF-02-015244" ->
+// "CSD", "Ccs-(af)-02-001378" -> "CCS"), uppercased for consistency since
+// existing data is inconsistently cased. Unlike classification, this isn't
+// a fixed two-value enum -- whatever letter codes actually appear in
+// survey_no (CSD, CCS, CSC, CSF, ...) become selectable, discovered live
+// from the DB via tree/route.ts's facets mode rather than hardcoded here.
+// Rows where survey_no is null, blank, or doesn't start with a letter
+// resolve to a NULL prefix and are excluded whenever a prefixes filter is
+// active, same treatment as classification's NULL case -- never guessed
+// into a bucket.
 //
 // The legacy singular modes are UNCHANGED and still used by: single-lot
 // fetch from search select (`id`), a specific sheet (`sheet_id`), and
@@ -58,6 +70,8 @@
 //   /api/map/lots?cenro_ids=1,2&years=2023,2024       (combined facet filter — ProjectionModal)
 //   /api/map/lots?municipality_ids=5,9&barangay_ids=12&years=2024
 //   /api/map/lots?cenro_ids=3&classifications=RFPA    (only RFPA-classified lots under CENRO 3)
+//   /api/map/lots?prefixes=CSD                        (every CSD-prefixed plan, PENRO-wide)
+//   /api/map/lots?prefixes=CSD,CCS&years=2023         (CSD or CCS plans surveyed in 2023)
 //
 // Optional, combinable with any of the above — restricts to the current map
 // viewport once a selection is large (e.g. "whole municipality"):
@@ -95,11 +109,17 @@
 // (a sheet located only via control_point, with no legacy per-lot
 // municipality FK set).
 //
-// properties.classification / classificationThreshold (this pass): same
-// derivation as the classifications filter above, always computed and
-// returned regardless of whether a classifications filter was applied, so
-// the map/report/attribute table can show RFPA vs FPA on every lot. Both
-// are null when the lot's municipality has no rule at either level.
+// properties.classification / classificationThreshold: same derivation as
+// the classifications filter above, always computed and returned
+// regardless of whether a classifications filter was applied, so the
+// map/report/attribute table can show RFPA vs FPA on every lot. Both are
+// null when the lot's municipality has no rule at either level.
+//
+// properties.planPrefix (this pass): same derivation as the prefixes filter
+// above, always computed and returned regardless of whether a prefixes
+// filter was applied, so the map/report/attribute table can show the plan
+// type on every lot. Null when survey_no is missing, blank, or doesn't
+// start with a letter.
 import { NextResponse } from "next/server";
 import { getPool } from "@/lib/db";
 
@@ -112,7 +132,20 @@ type ClassificationCode = (typeof VALID_CLASSIFICATIONS)[number];
 // manually since the two routes don't currently share a query-builder
 // module. If a shared lib/sql helpers file gets introduced later, this is
 // the first thing to hoist into it.
-const CLASSIFICATION_CASE_SQL = `CASE WHEN l.area_sqm <= get_rfpa_threshold(l.municipality_id) THEN 'RFPA' ELSE 'FPA' END`;
+const CLASSIFICATION_CASE_SQL = `CASE
+  WHEN get_rfpa_threshold(l.municipality_id) IS NULL THEN NULL
+  WHEN l.area_sqm <= get_rfpa_threshold(l.municipality_id) THEN 'RFPA'
+  ELSE 'FPA'
+END`;
+
+// Same expression as tree/route.ts's PLAN_PREFIX_SQL — kept in sync
+// manually, same as CLASSIFICATION_CASE_SQL above. Pulls the leading run
+// of letters off survey_no and uppercases it (e.g. "Csd-af-02-015026" ->
+// "CSD"). Resolves to NULL (not an empty string) when survey_no is null,
+// blank, or doesn't start with a letter -- substring() returning no match
+// yields NULL, which is exactly the "excluded, not guessed" behavior this
+// facet needs.
+const PLAN_PREFIX_SQL = `UPPER(substring(l.survey_no from '^[A-Za-z]+'))`;
 
 // All the *_id params below are expected to be positive integers (Postgres
 // int/bigint columns). Anything else would otherwise reach the DB as a raw
@@ -156,6 +189,26 @@ function parseClassificationList(value: string | null): ClassificationCode[] | n
   return out;
 }
 
+// Parses a comma-separated list of plan-prefix codes for the `prefixes`
+// facet param. Unlike classifications, prefixes aren't a fixed enum --
+// CSD/CCS are what's in the data today, but CSC/CSF or others could show
+// up later -- so this only validates *shape* (2-6 letters, matching what a
+// real survey-plan prefix looks like), not membership in a fixed list. The
+// DB stays the source of truth for which prefixes actually exist (see
+// tree/route.ts's "prefixes" facet target). Case-insensitive on input,
+// same as classifications.
+function parsePrefixList(value: string | null): string[] | null {
+  if (value == null || value.trim() === "") return [];
+  const out: string[] = [];
+  for (const part of value.split(",")) {
+    const trimmed = part.trim().toUpperCase();
+    if (trimmed === "") continue;
+    if (!/^[A-Z]{2,6}$/.test(trimmed)) return null;
+    out.push(trimmed);
+  }
+  return out;
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const idRaw = searchParams.get("id");
@@ -173,25 +226,29 @@ export async function GET(request: Request) {
   const barangayIdsRaw = searchParams.get("barangay_ids");
   const yearsRaw = searchParams.get("years");
   const classificationsRaw = searchParams.get("classifications");
+  const prefixesRaw = searchParams.get("prefixes");
 
   const cenroIds = parsePositiveIntList(cenroIdsRaw);
   const municipalityIds = parsePositiveIntList(municipalityIdsRaw);
   const barangayIds = parsePositiveIntList(barangayIdsRaw);
   const years = parsePositiveIntList(yearsRaw);
   const classifications = parseClassificationList(classificationsRaw);
+  const prefixes = parsePrefixList(prefixesRaw);
 
   if (
     cenroIds == null ||
     municipalityIds == null ||
     barangayIds == null ||
     years == null ||
-    classifications == null
+    classifications == null ||
+    prefixes == null
   ) {
     return NextResponse.json(
       {
         error:
           "cenro_ids, municipality_ids, barangay_ids, and years must be comma-separated positive integers; " +
-          "classifications must be a comma-separated list of RFPA and/or FPA.",
+          "classifications must be a comma-separated list of RFPA and/or FPA; " +
+          "prefixes must be a comma-separated list of 2-6 letter codes (e.g. CSD,CCS).",
       },
       { status: 400 }
     );
@@ -202,7 +259,8 @@ export async function GET(request: Request) {
     municipalityIds.length > 0 ||
     barangayIds.length > 0 ||
     years.length > 0 ||
-    classifications.length > 0;
+    classifications.length > 0 ||
+    prefixes.length > 0;
 
   const conditions: string[] = ["l.geom IS NOT NULL"];
   const params: unknown[] = [];
@@ -235,6 +293,13 @@ export async function GET(request: Request) {
       // either bucket -- the AND makes this automatic since NULL = ANY(...)
       // is NULL (falsy), not an error, but stated explicitly for clarity.
       conditions.push(`(${CLASSIFICATION_CASE_SQL}) = ANY(${addParam(classifications)})`);
+    }
+    if (prefixes.length > 0) {
+      // Same NULL-excludes-automatically behavior as classifications above:
+      // a lot whose survey_no doesn't yield a prefix has PLAN_PREFIX_SQL
+      // evaluate to NULL, and NULL = ANY(...) is NULL (falsy), so it's
+      // excluded rather than matching any checked prefix.
+      conditions.push(`(${PLAN_PREFIX_SQL}) = ANY(${addParam(prefixes)})`);
     }
   } else {
     // Legacy single-select modes — unchanged from before this pass.
@@ -290,7 +355,7 @@ export async function GET(request: Request) {
         {
           error:
             "Provide one of: id, sheet_id, barangay_id (optionally with year), municipality_id, cenro_id, surveyor_id, " +
-            "or a combined facet filter (cenro_ids/municipality_ids/barangay_ids/years/classifications).",
+            "or a combined facet filter (cenro_ids/municipality_ids/barangay_ids/years/classifications/prefixes).",
         },
         { status: 400 }
       );
@@ -333,7 +398,8 @@ export async function GET(request: Request) {
       CASE
         WHEN get_rfpa_threshold(l.municipality_id) IS NULL THEN NULL
         ELSE ${CLASSIFICATION_CASE_SQL}
-      END AS classification
+      END AS classification,
+      ${PLAN_PREFIX_SQL} AS plan_prefix
     FROM lots l
     LEFT JOIN lot_sheets ls ON ls.id = l.lot_sheet_id
     LEFT JOIN control_points cp ON cp.id = ls.control_point_id
@@ -382,6 +448,7 @@ export async function GET(request: Request) {
       cenro: row.cenro_name,
       classification: row.classification,
       classificationThreshold: row.classification_threshold,
+      planPrefix: row.plan_prefix,
     },
   }));
 
