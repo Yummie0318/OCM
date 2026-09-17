@@ -219,6 +219,7 @@ export default function LotEditor({ lots, onChange }: Props) {
                     type="text"
                     value={corner.station}
                     maxLength={2}
+                    tabIndex={-1}
                     onChange={(e) => updateCorner(lot.id, corner.id, { station: e.target.value })}
                   />
                   <input className={inputCls} type="number" step="any" value={corner.northing} onChange={(e) => updateCorner(lot.id, corner.id, { northing: e.target.value })} />
@@ -227,6 +228,7 @@ export default function LotEditor({ lots, onChange }: Props) {
                     {lot.corners.length > 3 && (
                       <button
                         type="button"
+                        tabIndex={-1}
                         onClick={() => removeCorner(lot.id, corner.id)}
                         className="flex h-5 w-5 items-center justify-center rounded-[6px] border-0 bg-transparent p-0 text-red-500 transition-colors hover:bg-red-500/10"
                       >
