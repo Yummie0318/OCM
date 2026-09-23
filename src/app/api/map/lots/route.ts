@@ -94,6 +94,23 @@
 // l.province_id/l.municipality_id join only for older sheets that were saved
 // before control_point_id existed (cp.* will be null in that case).
 //
+// MUNICIPALITY-FROM-BARANGAY FIX (this pass): municipality_name previously
+// preferred cp.municipality_name (free text on the sheet's control point)
+// over everything else. That text field is entered independently of which
+// barangay got assigned to the lot, so the two can silently disagree — a
+// real case: sheet 6150 (PLS-567) has barangay_id pointing at Annabuculan
+// (which the barangays table correctly files under Amulung), but its
+// control point's municipality_name was typed as "Alcala". The map and
+// attribute table both showed "Alcala" for lots that were actually in
+// Amulung.
+//
+// Fix: join barangays -> municipalities (bm below) and let that take
+// priority. l.barangay_id is a real FK, so the barangay's own parent
+// municipality can never drift out of sync with which barangay was picked
+// — unlike cp.municipality_name, which is just typed text. cp.municipality_
+// name (then the legacy l.municipality_id join) now only kicks in as a
+// fallback for the rarer case where a lot has no barangay_id at all.
+//
 // properties.encodedBy comes from lot_sheets.created_by -> users.username —
 // i.e. whoever encoded the SHEET this lot belongs to, not a per-lot value
 // (lots themselves don't carry their own created_by column). Every lot on
@@ -105,9 +122,9 @@
 // same column the cenro_ids facet filter below matches against — so the
 // CENRO shown on a lot is always consistent with what the CENRO filter
 // actually matched, even when the displayed province/municipality NAME
-// comes from control_points instead. Null if l.municipality_id is null
-// (a sheet located only via control_point, with no legacy per-lot
-// municipality FK set).
+// comes from the barangay (or control point) instead. Null if
+// l.municipality_id is null (a sheet located only via control_point, with
+// no legacy per-lot municipality FK set).
 //
 // properties.classification / classificationThreshold: same derivation as
 // the classifications filter above, always computed and returned
@@ -388,7 +405,17 @@ export async function GET(request: Request) {
       ls.id AS sheet_id, ls.plan_url, ls.documents_url, ls.survey_class, ls.sheet_no,
       ST_AsGeoJSON(l.geom) AS geometry_json,
       COALESCE(cp.province_name, p.name) AS province_name,
-      COALESCE(cp.municipality_name, m.name) AS municipality_name,
+      -- bm (the barangay's own municipality, via barangays.municipality_id)
+      -- takes priority over cp.municipality_name / legacy m.name: l.barangay_id
+      -- is a real FK, so the barangay's parent municipality can never
+      -- disagree with which barangay was picked. cp.municipality_name is
+      -- free text on the sheet's control point and can be typed
+      -- independently of the barangay (this is what happened on sheet
+      -- 6150/PLS-567 — barangay_id correctly pointed at Annabuculan, under
+      -- Amulung, but the control point's municipality_name was typed as
+      -- "Alcala"). It now only serves as a fallback for sheets with no
+      -- barangay_id set at all.
+      COALESCE(bm.name, cp.municipality_name, m.name) AS municipality_name,
       b.name AS barangay_name,
       s.name AS surveyor_name,
       eu.username AS encoded_by_username,
@@ -407,6 +434,7 @@ export async function GET(request: Request) {
     LEFT JOIN municipalities m ON m.id = l.municipality_id
     LEFT JOIN cenros cen ON cen.id = m.cenro_id
     LEFT JOIN barangays b ON b.id = l.barangay_id
+    LEFT JOIN municipalities bm ON bm.id = b.municipality_id
     LEFT JOIN surveyors s ON s.id = l.surveyor_id
     LEFT JOIN users eu ON eu.id = ls.created_by
     WHERE ${conditions.join(" AND ")}

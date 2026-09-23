@@ -2,7 +2,12 @@
 
 // Target path: src/components/ExportFooter.tsx
 //
-// DOCUMENTS LINK + SURVEY CLASS (this pass): the Save-to-Database modal
+// SAVED-STATE UI (this pass): replaced the plain "Saved ✓ / Sheet X · N lots"
+// text block with a proper success screen — check icon, sheet summary, and
+// a small recap of what was actually submitted (survey class + whether a
+// plan/documents link was attached). Purely visual, no logic changes.
+//
+// DOCUMENTS LINK + SURVEY CLASS (earlier pass): the Save-to-Database modal
 // gains two new fields alongside the existing "Plan link":
 //   - "Documents link" — optional, same shape/validation as Plan link
 //     (must be a traceable Google Drive/Docs URL when non-empty, checked
@@ -126,6 +131,18 @@ export default function ExportFooter({ lots, computedLots, controlPoint }: Props
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [duplicates, setDuplicates] = useState<{ lotNo: string; surveyNo: string }[]>([]);
   const [validationError, setValidationError] = useState<string | null>(null);
+  // Snapshot of what was actually submitted, captured at the moment the
+  // POST succeeds. The form fields (sheetNo/planUrl/etc.) stay live and
+  // get wiped on the next openModal(), so the success screen reads from
+  // this instead of the live state — otherwise it would show stale/blank
+  // values the instant the modal is reopened for a new sheet.
+  const [savedSummary, setSavedSummary] = useState<{
+    sheetNo: string;
+    lotCount: number;
+    surveyClass: SurveyClass;
+    hasPlanUrl: boolean;
+    hasDocumentsUrl: boolean;
+  } | null>(null);
 
   function openModal() {
     setSheetNo("");
@@ -135,6 +152,7 @@ export default function ExportFooter({ lots, computedLots, controlPoint }: Props
     setSaveState("idle");
     setSaveMessage(null);
     setDuplicates([]);
+    setSavedSummary(null);
     setModalOpen(true);
   }
 
@@ -263,6 +281,14 @@ export default function ExportFooter({ lots, computedLots, controlPoint }: Props
         return;
       }
       if (!res.ok) throw new Error(data.error || "Save failed.");
+
+      setSavedSummary({
+        sheetNo: sheetNo.trim(),
+        lotCount: computedLots.length,
+        surveyClass,
+        hasPlanUrl: Boolean(trimmedPlanUrl),
+        hasDocumentsUrl: Boolean(trimmedDocumentsUrl),
+      });
       setSaveState("saved");
     } catch (err) {
       setSaveState("error");
@@ -310,16 +336,88 @@ export default function ExportFooter({ lots, computedLots, controlPoint }: Props
             className="relative flex w-[92vw] max-w-sm flex-col gap-3 rounded-[16px] p-5 shadow-2xl"
             style={{ background: "var(--sb-bg-elevated)", border: `1px solid ${HAIRLINE}` }}
           >
-            {saveState === "saved" ? (
-              <>
-                <h3 className="text-[14px] font-bold text-[var(--sb-text)]">Saved ✓</h3>
-                <p className="text-[12px] text-[var(--sb-text-faint)]">
-                  Sheet {sheetNo.trim()} · {computedLots.length} lot{computedLots.length > 1 ? "s" : ""}
-                </p>
-                <button onClick={closeModal} className={`${accentBtnCls} self-end`} style={{ background: "var(--sb-accent)" }}>
-                  Close
+            {saveState === "saved" && savedSummary ? (
+              <div className="flex flex-col items-center gap-4 py-1 text-center">
+                <div
+                  className="flex h-14 w-14 items-center justify-center rounded-full"
+                  style={{ background: "color-mix(in srgb, var(--sb-accent) 16%, transparent)" }}
+                >
+                  <svg
+                    width="26"
+                    height="26"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="var(--sb-accent)"
+                    strokeWidth="3"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    style={{
+                      strokeDasharray: 24,
+                      strokeDashoffset: 0,
+                      animation: "sb-check-draw 0.35s ease-out",
+                    }}
+                  >
+                    <path d="M20 6 9 17l-5-5" />
+                  </svg>
+                </div>
+
+                <div>
+                  <h3 className="text-[15px] font-bold text-[var(--sb-text)]">Saved to database</h3>
+                  <p className="mt-1 text-[12.5px] text-[var(--sb-text-faint)]">
+                    Sheet <span className="font-semibold text-[var(--sb-text)]">{savedSummary.sheetNo}</span>
+                    {" · "}
+                    {savedSummary.lotCount} lot{savedSummary.lotCount > 1 ? "s" : ""}
+                  </p>
+                </div>
+
+                <div
+                  className="flex w-full flex-col divide-y text-left text-[11.5px]"
+                  style={{ background: "var(--sb-hover)", borderRadius: 10, borderColor: HAIRLINE }}
+                >
+                  <div className="flex items-center justify-between px-3 py-2">
+                    <span className="text-[var(--sb-text-muted)]">Survey class</span>
+                    <span className="rounded-full px-2 py-[2px] text-[10.5px] font-semibold capitalize"
+                      style={{
+                        background: savedSummary.surveyClass === "admin"
+                          ? "color-mix(in srgb, var(--sb-accent) 18%, transparent)"
+                          : "var(--sb-border)",
+                        color: savedSummary.surveyClass === "admin" ? "var(--sb-accent)" : "var(--sb-text)",
+                      }}
+                    >
+                      {savedSummary.surveyClass}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between px-3 py-2">
+                    <span className="text-[var(--sb-text-muted)]">Plan link</span>
+                    <span className="font-semibold text-[var(--sb-text)]">
+                      {savedSummary.hasPlanUrl ? "Attached" : "None"}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between px-3 py-2">
+                    <span className="text-[var(--sb-text-muted)]">Documents link</span>
+                    <span className="font-semibold text-[var(--sb-text)]">
+                      {savedSummary.hasDocumentsUrl ? "Attached" : "None"}
+                    </span>
+                  </div>
+                </div>
+
+                <button onClick={closeModal} className={`${accentBtnCls} w-full`} style={{ background: "var(--sb-accent)" }}>
+                  Done
                 </button>
-              </>
+
+                <style jsx>{`
+                  @keyframes sb-check-draw {
+                    from {
+                      stroke-dashoffset: 24;
+                      opacity: 0;
+                    }
+                    to {
+                      stroke-dashoffset: 0;
+                      opacity: 1;
+                    }
+                  }
+                `}</style>
+              </div>
             ) : (
               <>
                 <h3 className="text-[14px] font-bold text-[var(--sb-text)]">Save to Database</h3>

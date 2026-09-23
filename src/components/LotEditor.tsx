@@ -1,7 +1,7 @@
 "use client";
 
-import { Fragment, useEffect, useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Fragment, useEffect, useRef, useState, type ChangeEvent } from "react";
+import { Plus, Trash2, ImageUp, Loader2 } from "lucide-react";
 import type { Lot, Corner } from "@/types";
 import { localRing } from "@/lib/computeLots";
 import ShapePreview from "@/components/ShapePreview";
@@ -48,14 +48,97 @@ interface Props {
   onChange: (lots: Lot[]) => void;
 }
 
+function fileToBase64(file: File | Blob): Promise<{ data: string; mediaType: string }> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      const [, data] = result.split(",");
+      resolve({ data, mediaType: file.type || "image/png" });
+    };
+    reader.onerror = () => reject(new Error("Could not read file"));
+    reader.readAsDataURL(file);
+  });
+}
+
 export default function LotEditor({ lots, onChange }: Props) {
   const [provinces, setProvinces] = useState<ProvinceOption[]>([]);
   const [surveyors, setSurveyors] = useState<SurveyorOption[]>([]);
+  const [importingLotId, setImportingLotId] = useState<string | null>(null);
+  const [importError, setImportError] = useState<{ lotId: string; message: string } | null>(null);
+  const importTargetLotId = useRef<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     fetch("/api/provinces").then((r) => r.json()).then(setProvinces).catch(() => setProvinces([]));
     fetch("/api/surveyors").then((r) => r.json()).then(setSurveyors).catch(() => setSurveyors([]));
   }, []);
+
+  function triggerImport(lotId: string) {
+    setImportError(null);
+    importTargetLotId.current = lotId;
+    fileInputRef.current?.click();
+  }
+
+  async function processImportImage(file: File | Blob, lotId: string) {
+    setImportingLotId(lotId);
+    setImportError(null);
+    try {
+      const { data, mediaType } = await fileToBase64(file);
+      const res = await fetch("/api/extract-corners", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageBase64: data, mediaType }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Failed to read image");
+
+      const corners: Corner[] = json.corners.map((c: { station: string; northing: string; easting: string }) => ({
+        id: uid(),
+        station: c.station ?? "",
+        northing: c.northing ?? "",
+        easting: c.easting ?? "",
+      }));
+
+      onChange(lots.map((l) => (l.id === lotId ? { ...l, corners } : l)));
+    } catch (err) {
+      setImportError({ lotId, message: err instanceof Error ? err.message : "Failed to read image" });
+    } finally {
+      setImportingLotId(null);
+    }
+  }
+
+  async function handleImageSelected(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    const lotId = importTargetLotId.current;
+    e.target.value = ""; // allow re-selecting the same file later
+    if (!file || !lotId) return;
+    processImportImage(file, lotId);
+  }
+
+  // Lets the user Snipping-Tool a table straight to the clipboard and hit
+  // Ctrl+V to fill whichever lot they last hovered/focused, with no file
+  // dialog needed.
+  useEffect(() => {
+    function handleWindowPaste(e: ClipboardEvent) {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (const item of Array.from(items)) {
+        if (item.type.startsWith("image/")) {
+          const file = item.getAsFile();
+          const lotId = importTargetLotId.current ?? lots[0]?.id ?? null;
+          if (file && lotId) {
+            e.preventDefault();
+            processImportImage(file, lotId);
+          }
+          break;
+        }
+      }
+    }
+    window.addEventListener("paste", handleWindowPaste);
+    return () => window.removeEventListener("paste", handleWindowPaste);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lots]);
 
   function updateLot(id: string, patch: Partial<Lot>) {
     onChange(lots.map((l) => (l.id === id ? { ...l, ...patch } : l)));
@@ -107,10 +190,20 @@ export default function LotEditor({ lots, onChange }: Props) {
     >
       <SectionHeader index={2} title="Lot Data" />
 
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleImageSelected}
+      />
+
       <div className="flex flex-col gap-3">
         {lots.map((lot, lotIdx) => (
           <div
             key={lot.id}
+            onMouseEnter={() => { importTargetLotId.current = lot.id; }}
+            onFocusCapture={() => { importTargetLotId.current = lot.id; }}
             className="flex flex-col gap-3 rounded-[12px] p-3"
             style={{ border: `1px solid ${HAIRLINE}`, background: "var(--sb-bg)" }}
           >
@@ -205,6 +298,32 @@ export default function LotEditor({ lots, onChange }: Props) {
                 </div>
               </div>
             </div>
+
+            <div className="flex items-center justify-between">
+              <span className="text-[10.5px] font-semibold text-[var(--sb-text-muted)]">Corners</span>
+              <button
+                type="button"
+                onClick={() => triggerImport(lot.id)}
+                disabled={importingLotId === lot.id}
+                className="flex items-center gap-1 rounded-full border-0 bg-[var(--sb-hover)] px-2.5 py-1 text-[10.5px] font-semibold text-[var(--sb-text)] transition-opacity hover:opacity-80 disabled:opacity-50"
+              >
+                {importingLotId === lot.id ? (
+                  <>
+                    <Loader2 size={11} className="animate-spin" /> Reading image…
+                  </>
+                ) : (
+                  <>
+                    <ImageUp size={11} /> Import from image
+                  </>
+                )}
+              </button>
+            </div>
+            {importError?.lotId === lot.id && (
+              <span className="text-[10.5px] font-medium text-red-500">{importError.message}</span>
+            )}
+            <span className="text-[10px] text-[var(--sb-text-faint)]">
+              Tip: you can also just hover this lot and press Ctrl+V to paste a screenshot (e.g. from Snipping Tool).
+            </span>
 
             <div className="grid grid-cols-[46px_1fr_1fr_24px] items-center gap-1.5">
               <span className="text-[9.5px] font-bold uppercase tracking-wide text-[var(--sb-text-faint)]">Sta</span>
