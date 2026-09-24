@@ -3,7 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { Eye, EyeOff, Lock, User, LoaderCircle } from "lucide-react";
-import { uiFont, ACCENT } from "@/components/map/sidebarTheme";
+import { uiFont } from "@/components/map/sidebarTheme";
 import { SidebarThemeProvider, useSidebarTheme } from "@/components/map/SidebarThemeContext";
 
 export default function LoginPageWrapper() {
@@ -18,7 +18,7 @@ export default function LoginPageWrapper() {
 
 function LoginPage() {
   const router = useRouter();
-  const { vars } = useSidebarTheme();
+  const { vars, theme, darkMode } = useSidebarTheme();
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -75,8 +75,8 @@ function LoginPage() {
       <div className="relative w-full max-w-[380px] animate-[login-in_0.35s_ease-out] rounded-[20px] bg-[var(--sb-bg-elevated)] p-7 sm:p-8" style={{ boxShadow: "var(--sb-shadow)" }}>
         <div className="flex flex-col items-center text-center">
           <div
-            className="flex h-11 w-11 items-center justify-center rounded-[12px] text-sm font-bold tracking-wide text-white"
-            style={{ background: `linear-gradient(135deg, #6366f1, ${ACCENT})` }}
+            className="flex h-11 w-11 items-center justify-center rounded-[12px] text-sm font-bold tracking-wide"
+            style={{ background: `linear-gradient(135deg, #6366f1, ${theme.accent})`, color: theme.onAccent }}
           >
             OCM
           </div>
@@ -90,7 +90,12 @@ function LoginPage() {
           {error && (
             <div
               role="alert"
-              className="rounded-[10px] border border-red-200 bg-red-50 px-3 py-2.5 text-[12.5px] font-medium text-red-700 dark:border-red-900/40 dark:bg-red-950/40 dark:text-red-300"
+              className="rounded-[10px] border px-3 py-2.5 text-[12.5px] font-medium"
+              style={{
+                background: darkMode ? "rgba(239, 68, 68, 0.12)" : "#fef2f2",
+                borderColor: darkMode ? "rgba(239, 68, 68, 0.35)" : "#fecaca",
+                color: darkMode ? "#fca5a5" : "#b91c1c",
+              }}
             >
               {error}
             </div>
@@ -138,8 +143,8 @@ function LoginPage() {
           <button
             type="submit"
             disabled={submitting}
-            className="mt-2 flex min-h-[46px] items-center justify-center gap-2 rounded-full border-0 py-2.5 text-[14px] font-semibold text-white shadow-sm transition-all hover:opacity-90 active:scale-[0.98] disabled:opacity-60 disabled:active:scale-100 sm:text-[13.5px]"
-            style={{ background: ACCENT }}
+            className="mt-2 flex min-h-[46px] items-center justify-center gap-2 rounded-full border-0 py-2.5 text-[14px] font-semibold shadow-sm transition-all hover:opacity-90 active:scale-[0.98] disabled:opacity-60 disabled:active:scale-100 sm:text-[13.5px]"
+            style={{ background: theme.accent, color: theme.onAccent }}
           >
             {submitting && <LoaderCircle size={14} className="animate-spin" />}
             {submitting ? "Signing in…" : "Sign in"}
@@ -153,7 +158,7 @@ function LoginPage() {
             target="_blank"
             rel="noopener noreferrer"
             className="font-medium underline-offset-2 hover:underline"
-            style={{ color: ACCENT }}
+            style={{ color: theme.accent }}
           >
             Arnold Mendoza
           </a>

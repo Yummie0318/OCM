@@ -262,8 +262,8 @@ export default function SheetPreviewModal({ open, onClose, sheet }: Props) {
             <button
               type="button"
               onClick={() => window.print()}
-              className="flex items-center gap-1.5 rounded-full border-0 px-3.5 py-[7px] text-[11.5px] font-semibold text-white transition-opacity duration-100 hover:opacity-90"
-              style={{ background: theme.accent }}
+              className="flex items-center gap-1.5 rounded-full border-0 px-3.5 py-[7px] text-[11.5px] font-semibold transition-opacity duration-100 hover:opacity-90"
+              style={{ background: theme.accent, color: theme.onAccent }}
             >
               <Printer size={13} />
               Print

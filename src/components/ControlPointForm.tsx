@@ -194,8 +194,8 @@ export function SectionHeader({ index, title }: { index: number; title: string }
   return (
     <div className="flex items-center gap-2">
       <span
-        className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full text-[10.5px] font-bold text-white"
-        style={{ background: "var(--sb-accent)" }}
+        className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full text-[10.5px] font-bold"
+        style={{ background: "var(--sb-accent)", color: "var(--sb-on-accent)" }}
       >
         {index}
       </span>

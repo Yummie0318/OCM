@@ -117,8 +117,8 @@ export default function ShapePreview({
           type="button"
           onClick={onViewMap}
           title="Preview this shape on a basemap"
-          className="absolute right-2 top-2 z-10 rounded-full border-0 px-2.5 py-1 text-[10.5px] font-semibold text-white shadow transition-opacity hover:opacity-90"
-          style={{ background: "var(--sb-accent)" }}
+          className="absolute right-2 top-2 z-10 rounded-full border-0 px-2.5 py-1 text-[10.5px] font-semibold shadow transition-opacity hover:opacity-90"
+          style={{ background: "var(--sb-accent)", color: "var(--sb-on-accent)" }}
         >
           View on map
         </button>

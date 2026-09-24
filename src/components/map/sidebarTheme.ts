@@ -52,6 +52,7 @@ export type SidebarTheme = {
   accent: string;
   accentBg: string;
   accentText: string;
+  onAccent: string; // text/icon color drawn ON TOP of the accent (buttons, badges)
   shadow: string;
   overlayBg: string; // modal / drawer backdrop
 };
@@ -67,6 +68,7 @@ export const lightTheme: SidebarTheme = {
   accent: ACCENT,
   accentBg: "#eef1ff",
   accentText: "#3730a3",
+  onAccent: "#ffffff",
   shadow: "0 10px 30px rgba(15, 23, 42, 0.10)",
   overlayBg: "rgba(15, 23, 42, 0.4)",
 };
@@ -82,12 +84,94 @@ export const darkTheme: SidebarTheme = {
   accent: "#818cf8",
   accentBg: "rgba(129, 140, 248, 0.16)",
   accentText: "#c7d2fe",
+  onAccent: "#ffffff",
   shadow: "0 10px 30px rgba(0, 0, 0, 0.5)",
   overlayBg: "rgba(0, 0, 0, 0.6)",
 };
 
-export function getTheme(darkMode: boolean): SidebarTheme {
-  return darkMode ? darkTheme : lightTheme;
+// Preset accent colors offered in the theme picker. The first one is the
+// original default (indigo).
+export const ACCENT_PRESETS: { label: string; value: string }[] = [
+  { label: "Indigo", value: "#4f46e5" },
+  { label: "Blue", value: "#2563eb" },
+  { label: "Teal", value: "#0d9488" },
+  { label: "Green", value: "#16a34a" },
+  { label: "Orange", value: "#ea580c" },
+  { label: "Rose", value: "#e11d48" },
+  { label: "Purple", value: "#9333ea" },
+];
+
+function hexToRgb(hex: string) {
+  const h = hex.replace("#", "");
+  const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
+  const n = parseInt(full, 16);
+  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+}
+
+function rgbToHex(r: number, g: number, b: number) {
+  return (
+    "#" +
+    [r, g, b]
+      .map((v) => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, "0"))
+      .join("")
+  );
+}
+
+// Blends `hex` toward black (target 0) or white (target 255).
+function mixWith(hex: string, target: 0 | 255, amount: number) {
+  const { r, g, b } = hexToRgb(hex);
+  return rgbToHex(r + (target - r) * amount, g + (target - g) * amount, b + (target - b) * amount);
+}
+
+// Returns the theme with accent, accentBg and accentText derived from a
+// single chosen hex color. Everything else in the palette is unchanged.
+// WCAG relative luminance + contrast ratio, used to keep a user-chosen
+// accent readable against the theme background.
+function luminance(hex: string) {
+  const { r, g, b } = hexToRgb(hex);
+  const f = (v: number) => {
+    const c = v / 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+}
+
+function contrastRatio(a: string, b: string) {
+  const la = luminance(a);
+  const lb = luminance(b);
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+}
+
+// If the accent is too close to the background (e.g. white on a white
+// theme), push it away from the background until it reaches `min` contrast.
+function ensureContrast(hex: string, bg: string, darkMode: boolean, min = 3) {
+  const target: 0 | 255 = darkMode ? 255 : 0;
+  let out = hex;
+  for (let i = 0; i < 30 && contrastRatio(out, bg) < min; i++) {
+    out = mixWith(out, target, 0.1);
+  }
+  return out;
+}
+
+// Returns the theme with accent, accentBg, accentText and onAccent derived
+// from a single chosen hex color. Everything else is unchanged.
+export function withAccent(theme: SidebarTheme, accentHex: string, darkMode: boolean): SidebarTheme {
+  const accent = ensureContrast(accentHex, theme.bg, darkMode);
+  const { r, g, b } = hexToRgb(accent);
+  return {
+    ...theme,
+    accent,
+    accentBg: `rgba(${r}, ${g}, ${b}, ${darkMode ? 0.16 : 0.1})`,
+    accentText: darkMode ? mixWith(accent, 255, 0.55) : mixWith(accent, 0, 0.35),
+    // White text unless the accent is light enough that white gets hard to read.
+    onAccent: contrastRatio(accent, "#ffffff") >= 2.5 ? "#ffffff" : "#111111",
+  };
+}
+
+// accentHex is optional, so existing getTheme(darkMode) calls keep working.
+export function getTheme(darkMode: boolean, accentHex?: string): SidebarTheme {
+  const base = darkMode ? darkTheme : lightTheme;
+  return accentHex ? withAccent(base, accentHex, darkMode) : base;
 }
 
 /**
@@ -109,6 +193,7 @@ export function themeVars(theme: SidebarTheme): CSSProperties {
     "--sb-accent": theme.accent,
     "--sb-accent-bg": theme.accentBg,
     "--sb-accent-text": theme.accentText,
+    "--sb-on-accent": theme.onAccent,
     "--sb-shadow": theme.shadow,
     "--sb-overlay": theme.overlayBg,
   } as CSSProperties;

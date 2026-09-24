@@ -192,7 +192,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Menu, ChevronDown, ChevronUp, Table2, Sun, Map as MapIcon, Moon, Satellite } from "lucide-react";
+import { Menu, ChevronDown, ChevronUp, Table2, Sun, Map as MapIcon, Moon, Satellite, Square } from "lucide-react";
 import Sidebar from "@/components/map/Sidebar";
 import MapCanvas, { BASEMAPS, type BasemapId } from "@/components/map/MapCanvas";
 import AttributeTable, { type SheetPreviewRequest } from "@/components/map/AttributeTable";
@@ -246,12 +246,19 @@ const BASEMAP_ICONS: Record<BasemapId, typeof Sun> = {
   streets: MapIcon,
   dark: Moon,
   satellite: Satellite,
+  blank: Square,
 };
 
-const BASEMAP_ORDER: BasemapId[] = ["light", "streets", "dark", "satellite"];
+const BASEMAP_ORDER: BasemapId[] = ["light", "streets", "dark", "satellite", "blank"];
 
 function isBasemapId(value: string): value is BasemapId {
-  return value === "light" || value === "streets" || value === "dark" || value === "satellite";
+  return (
+    value === "light" ||
+    value === "streets" ||
+    value === "dark" ||
+    value === "satellite" ||
+    value === "blank"
+  );
 }
 
 // Pulls the clientX/clientY out of either a MouseEvent or a TouchEvent so
@@ -1314,6 +1321,7 @@ function MapViewerPageInner() {
             onFeatureClick={openFeature}
             lotColors={lotColors}
             basemapId={basemapId}
+            blankColor={theme.hoverBg}
           />
 
           {/* Basemap switcher. Bottom-left keeps it clear of MapLibre's
@@ -1364,7 +1372,7 @@ function MapViewerPageInner() {
                     className="flex h-8 w-8 items-center justify-center rounded-lg transition-colors"
                     style={{
                       background: active ? theme.accent : "transparent",
-                      color: active ? "#ffffff" : theme.textMuted,
+                      color: active ? theme.onAccent : theme.textMuted,
                     }}
                   >
                     <Icon size={15} />

@@ -24,11 +24,15 @@ import { createContext, useContext, useEffect, useMemo, useState, type CSSProper
 import { getTheme, themeVars, type SidebarTheme } from "./sidebarTheme";
 
 const DARK_MODE_STORAGE_KEY = "ocm-dark-mode";
+const ACCENT_STORAGE_KEY = "ocm-accent-color";
 
 interface SidebarThemeContextValue {
   darkMode: boolean;
   setDarkMode: (value: boolean) => void;
   toggleDarkMode: () => void;
+  // null = the original default accent.
+  accentColor: string | null;
+  setAccentColor: (hex: string | null) => void;
   theme: SidebarTheme;
   vars: CSSProperties;
 }
@@ -43,37 +47,61 @@ export function SidebarThemeProvider({
   defaultDarkMode?: boolean;
 }) {
   const [darkMode, setDarkMode] = useState(defaultDarkMode);
+  const [accentColor, setAccentColor] = useState<string | null>(null);
+  // False until the saved preferences have been read from localStorage.
+  // The save effects below wait for this, so they can't overwrite the
+  // stored values with defaults on first mount (or under Strict Mode's
+  // double-run of effects).
+  const [hydrated, setHydrated] = useState(false);
 
   // Restore the saved preference once, after mount.
   useEffect(() => {
     try {
       const stored = window.localStorage.getItem(DARK_MODE_STORAGE_KEY);
       if (stored !== null) setDarkMode(stored === "1");
+      const storedAccent = window.localStorage.getItem(ACCENT_STORAGE_KEY);
+      if (storedAccent && /^#[0-9a-fA-F]{6}$/.test(storedAccent)) setAccentColor(storedAccent);
     } catch {
       // localStorage unavailable (e.g. private browsing) — fall back to defaultDarkMode.
     }
+    setHydrated(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Persist every change (including the restore above) going forward.
   useEffect(() => {
+    if (!hydrated) return;
     try {
       window.localStorage.setItem(DARK_MODE_STORAGE_KEY, darkMode ? "1" : "0");
     } catch {
       // ignore
     }
-  }, [darkMode]);
+  }, [darkMode, hydrated]);
+
+  
+  // Persist the accent choice; null (default) removes the saved value.
+  useEffect(() => {
+    if (!hydrated) return;
+    try {
+      if (accentColor) window.localStorage.setItem(ACCENT_STORAGE_KEY, accentColor);
+      else window.localStorage.removeItem(ACCENT_STORAGE_KEY);
+    } catch {
+      // ignore
+    }
+  }, [accentColor, hydrated]);
 
   const value = useMemo<SidebarThemeContextValue>(() => {
-    const theme = getTheme(darkMode);
+    const theme = getTheme(darkMode, accentColor ?? undefined);
     return {
       darkMode,
       setDarkMode,
       toggleDarkMode: () => setDarkMode((v) => !v),
+      accentColor,
+      setAccentColor,
       theme,
       vars: themeVars(theme),
     };
-  }, [darkMode]);
+  }, [darkMode, accentColor]);
 
   return <SidebarThemeContext.Provider value={value}>{children}</SidebarThemeContext.Provider>;
 }

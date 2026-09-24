@@ -114,7 +114,7 @@ function getDuplicateLotNos(computedLots: ComputedLot[]): string[] {
 const ghostBtnCls =
   "rounded-full border-0 bg-[var(--sb-hover)] px-3 py-[7px] text-[12px] font-semibold text-[var(--sb-text)] transition-opacity hover:opacity-80 disabled:opacity-40";
 const accentBtnCls =
-  "rounded-full border-0 px-3 py-[7px] text-[12px] font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-40";
+  "rounded-full border-0 px-3 py-[7px] text-[12px] font-semibold text-[var(--sb-on-accent)] transition-opacity hover:opacity-90 disabled:opacity-40";
 
 export default function ExportFooter({ lots, computedLots, controlPoint }: Props) {
   const ready = computedLots.length > 0;
@@ -313,7 +313,7 @@ export default function ExportFooter({ lots, computedLots, controlPoint }: Props
           <div className="flex items-center gap-2">
             <button disabled={!ready} onClick={() => downloadGeoJSON(computedLots)} className={ghostBtnCls}>GeoJSON</button>
             <button disabled={!ready} onClick={() => downloadKML(computedLots)} className={ghostBtnCls}>KML</button>
-            <button disabled={!ready} onClick={() => downloadShapefile(computedLots, controlPoint)} className={accentBtnCls} style={{ background: "var(--sb-text)" }}>
+            <button disabled={!ready} onClick={() => downloadShapefile(computedLots, controlPoint)} className={accentBtnCls} style={{ background: "var(--sb-text)", color: "var(--sb-bg)" }}>
               Shapefile
             </button>
             <button disabled={!ready} onClick={handleSaveClick} className={accentBtnCls} style={{ background: "var(--sb-accent)" }}>

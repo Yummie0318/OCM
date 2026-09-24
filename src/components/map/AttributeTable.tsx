@@ -222,7 +222,7 @@ function PlanLink({ url, stopPropagation, label }: { url: string; stopPropagatio
       rel: "noopener noreferrer",
       onClick: stopPropagation ? (e: React.MouseEvent) => e.stopPropagation() : undefined,
       className:
-        "inline-flex items-center gap-1 rounded-full border-0 bg-[var(--sb-hover)] px-2 py-[3px] text-[10.5px] font-semibold text-[var(--sb-accent)] transition-colors duration-100 hover:bg-[var(--sb-accent-bg)]",
+        "inline-flex items-center gap-1 rounded-full border-0 bg-[var(--sb-hover)] px-2 py-[3px] text-[10.5px] font-semibold text-[var(--sb-accent-text)] transition-colors duration-100 hover:bg-[var(--sb-accent-bg)]",
     },
     React.createElement(ExternalLink, { size: 10 }),
     label
@@ -335,8 +335,11 @@ function InlineFieldControl({
         <button
           type="button"
           onClick={open}
-          className="inline-flex items-center gap-1 rounded-full border border-dashed px-2 py-[3px] text-[10.5px] font-semibold text-[var(--sb-accent)] transition-colors duration-100 hover:border-solid hover:bg-[var(--sb-accent-bg)]"
-          style={{ borderColor: "color-mix(in srgb, var(--sb-accent) 45%, transparent)" }}
+          className="inline-flex items-center gap-1 rounded-full border border-dashed px-2 py-[3px] text-[10.5px] font-semibold text-[var(--sb-accent-text)] transition-colors duration-100 hover:border-solid"
+          style={{
+            borderColor: "color-mix(in srgb, var(--sb-accent-text) 55%, transparent)",
+            background: "var(--sb-accent-bg)",
+          }}
         >
           <Plus size={10} strokeWidth={2.5} />
           {triggerLabel}
@@ -399,8 +402,8 @@ function InlineFieldControl({
           type="button"
           onClick={handleSave}
           disabled={saving || (kind !== "select" && !value.trim())}
-          className="flex h-[21px] w-[21px] flex-shrink-0 items-center justify-center rounded-full border-0 p-0 text-white transition-opacity duration-100 disabled:opacity-40"
-          style={{ background: "var(--sb-accent)" }}
+          className="flex h-[21px] w-[21px] flex-shrink-0 items-center justify-center rounded-full border-0 p-0 transition-opacity duration-100 disabled:opacity-40"
+          style={{ background: "var(--sb-accent)", color: "var(--sb-on-accent)" }}
         >
           {saving ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} strokeWidth={2.5} />}
         </button>
@@ -451,7 +454,7 @@ function Checkbox({
           background: checked ? "var(--sb-accent)" : "var(--sb-bg)",
         }}
       >
-        {checked && <Check size={10.5} strokeWidth={3} color="white" />}
+        {checked && <Check size={10.5} strokeWidth={3} style={{ color: "var(--sb-on-accent)" }} />}
       </span>
     </span>
   );
@@ -1323,7 +1326,7 @@ function SheetsTable({
                           lots: g.lots,
                         })
                       }
-                      className="flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded-[7px] border-0 bg-[var(--sb-accent-bg)] p-0 text-[var(--sb-accent)] transition-colors duration-100 hover:opacity-75"
+                      className="flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded-[7px] border-0 bg-[var(--sb-accent-bg)] p-0 text-[var(--sb-accent-text)] transition-colors duration-100 hover:opacity-75"
                     >
                       <Eye size={12} />
                     </button>

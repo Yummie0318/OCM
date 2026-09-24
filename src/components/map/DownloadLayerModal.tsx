@@ -182,8 +182,8 @@ export default function DownloadLayerModal({ open, onClose, label, features }: P
             type="button"
             onClick={handleDownload}
             disabled={busy || count === 0}
-            className="flex items-center gap-1.5 rounded-full border-0 px-3.5 py-[7px] text-[11.5px] font-semibold text-white transition-opacity duration-100 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-            style={{ background: theme.accent }}
+            className="flex items-center gap-1.5 rounded-full border-0 px-3.5 py-[7px] text-[11.5px] font-semibold transition-opacity duration-100 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+            style={{ background: theme.accent, color: theme.onAccent }}
           >
             {busy ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
             {busy ? "Preparing…" : "Download"}

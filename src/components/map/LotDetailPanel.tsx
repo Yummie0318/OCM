@@ -419,9 +419,9 @@ function ActionButton({
       type="button"
       onClick={onClick}
       className={`flex items-center gap-1.5 rounded-full border-0 px-3 py-[6px] text-[11.5px] font-semibold transition-colors duration-100 ${
-        primary ? "text-white hover:opacity-90" : "bg-[var(--sb-hover)] text-[var(--sb-text)] hover:bg-[var(--sb-border)]"
+        primary ? "hover:opacity-90" : "bg-[var(--sb-hover)] text-[var(--sb-text)] hover:bg-[var(--sb-border)]"
       }`}
-      style={primary ? { background: accent } : undefined}
+      style={primary ? { background: accent, color: "var(--sb-on-accent)" } : undefined}
     >
       {icon}
       {label}

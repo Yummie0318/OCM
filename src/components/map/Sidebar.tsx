@@ -183,7 +183,7 @@ import {
   Download,
 } from "lucide-react";
 import type { SelectionMeta, TreeNodeData, LotSearchResult } from "@/lib/geo";
-import { uiFont, type SidebarTheme } from "./sidebarTheme";
+import { uiFont, ACCENT_PRESETS, type SidebarTheme } from "./sidebarTheme";
 import { useSidebarTheme } from "./SidebarThemeContext";
 import SearchBar from "./SearchBar";
 import NotificationBell, { type ActivityLogRow } from "@/components/NotificationBell";
@@ -298,7 +298,7 @@ function Checkbox({ checked, onChange }: { checked: boolean; onChange: () => voi
           background: checked ? "var(--sb-accent)" : "var(--sb-bg)",
         }}
       >
-        {checked && <Check size={10.5} strokeWidth={3} color="white" />}
+        {checked && <Check size={10.5} strokeWidth={3} style={{ color: "var(--sb-on-accent)" }} />}
       </span>
     </span>
   );
@@ -431,7 +431,7 @@ export default function Sidebar({
   const [projectionModalOpen, setProjectionModalOpen] = useState(false);
 
   const accountRef = useRef<HTMLDivElement>(null);
-  const { darkMode, toggleDarkMode, theme, vars } = useSidebarTheme();
+  const { darkMode, toggleDarkMode, accentColor, setAccentColor, theme, vars } = useSidebarTheme();
 
   // Re-runs on mount AND whenever the parent bumps municipalitiesRefreshKey
   // (e.g. right after a lot sheet save succeeds), so newly-saved lots show
@@ -477,8 +477,8 @@ export default function Sidebar({
 
   const brand = (
     <div
-      className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-[10px] text-xs font-bold tracking-wide text-white"
-      style={{ background: `linear-gradient(135deg, #6366f1, ${theme.accent})` }}
+      className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-[10px] text-xs font-bold tracking-wide"
+      style={{ background: `linear-gradient(135deg, #6366f1, ${theme.accent})`, color: theme.onAccent }}
     >
       OCM
     </div>
@@ -500,6 +500,61 @@ export default function Sidebar({
             className="absolute bottom-[calc(100%+6px)] left-0 right-0 z-30 rounded-[12px] bg-[var(--sb-bg-elevated)] p-1.5"
             style={{ boxShadow: theme.shadow, border: `1px solid ${hairline}` }}
           >
+            {/* Theme color: preset swatches + custom picker + reset. */}
+            <div className="px-2 pb-2 pt-1.5" style={{ borderBottom: `1px solid ${hairlineSoft}` }}>
+              <div className="mb-1.5 flex items-center justify-between">
+                <span className="text-[10px] font-bold uppercase tracking-wide text-[var(--sb-text-muted)]">
+                  Theme color
+                </span>
+                {accentColor && (
+                  <button
+                    type="button"
+                    onClick={() => setAccentColor(null)}
+                    className="border-0 bg-transparent p-0 text-[10.5px] font-semibold text-[var(--sb-accent)] hover:opacity-70"
+                  >
+                    Reset
+                  </button>
+                )}
+              </div>
+              <div className="flex items-center gap-1.5">
+                {ACCENT_PRESETS.map((p) => {
+                  const selected = (accentColor ?? theme.accent).toLowerCase() === p.value.toLowerCase();
+                  return (
+                    <button
+                      key={p.value}
+                      type="button"
+                      title={p.label}
+                      aria-label={`${p.label} theme color`}
+                      onClick={() => setAccentColor(p.value)}
+                      className="h-[20px] w-[20px] flex-shrink-0 rounded-full border-0 p-0"
+                      style={{
+                        background: p.value,
+                        boxShadow: selected
+                          ? `0 0 0 2px var(--sb-bg-elevated), 0 0 0 4px ${p.value}`
+                          : "none",
+                      }}
+                    />
+                  );
+                })}
+                {/* Custom color: native color input styled as a swatch. */}
+                <label
+                  title="Custom color"
+                  className="relative ml-auto flex h-[20px] w-[20px] flex-shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-full"
+                  style={{
+                    background:
+                      "conic-gradient(#ef4444, #eab308, #22c55e, #06b6d4, #6366f1, #d946ef, #ef4444)",
+                  }}
+                >
+                  <input
+                    type="color"
+                    value={accentColor ?? theme.accent}
+                    onChange={(e) => setAccentColor(e.target.value)}
+                    className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                  />
+                </label>
+              </div>
+            </div>
+
             <button type="button" onClick={toggleDarkMode} className={menuItemClass}>
               {darkMode ? <Moon size={14} /> : <Sun size={14} />}
               {darkMode ? "Dark mode" : "Light mode"}
@@ -665,8 +720,8 @@ export default function Sidebar({
         {activeCount > 0 && (
           <Tooltip label={`${activeCount} layer${activeCount === 1 ? "" : "s"} selected`} side="right">
             <div
-              className="mt-1.5 flex h-[22px] min-w-[22px] flex-shrink-0 items-center justify-center rounded-full px-1.5 text-[10.5px] font-bold tabular-nums text-white"
-              style={{ background: theme.accent }}
+              className="mt-1.5 flex h-[22px] min-w-[22px] flex-shrink-0 items-center justify-center rounded-full px-1.5 text-[10.5px] font-bold tabular-nums"
+              style={{ background: theme.accent, color: theme.onAccent }}
             >
               {activeCount}
             </div>
@@ -679,7 +734,7 @@ export default function Sidebar({
           <NotificationBell compact onSelectLog={onActivityLogSelect} refreshKey={notificationsRefreshKey} />
         </div>
 
-        <AccountFooter compact />
+        {AccountFooter({ compact: true })}
         <style>{`@keyframes sidebar-pulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }`}</style>
 
         {/* Modal itself is rendered here too (portaled to <body>, so its
@@ -735,8 +790,8 @@ export default function Sidebar({
       <button
         type="button"
         onClick={onCreateShapefile}
-        className="mb-2.5 flex flex-shrink-0 items-center justify-center gap-2 rounded-full border-0 px-3 py-[9px] text-[12.5px] font-semibold text-white shadow-sm transition-opacity duration-100 hover:opacity-90"
-        style={{ background: theme.accent }}
+        className="mb-2.5 flex flex-shrink-0 items-center justify-center gap-2 rounded-full border-0 px-3 py-[9px] text-[12.5px] font-semibold shadow-sm transition-opacity duration-100 hover:opacity-90"
+        style={{ background: theme.accent, color: theme.onAccent }}
       >
         <FilePlus2 size={14} />
         Create Shapefile
@@ -790,7 +845,7 @@ export default function Sidebar({
         )}
       </div>
 
-      <AccountFooter compact={false} />
+      {AccountFooter({ compact: false })}
       <style>{`@keyframes sidebar-pulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }`}</style>
 
       <ProjectionModal
@@ -836,7 +891,7 @@ function TabButton({
       {typeof badge === "number" && badge > 0 && (
         <span
           className={`flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[9.5px] font-bold tabular-nums ${
-            active ? "bg-[var(--sb-accent)] text-white" : "bg-[var(--sb-border)] text-[var(--sb-text-muted)]"
+            active ? "bg-[var(--sb-accent)] text-[var(--sb-on-accent)]" : "bg-[var(--sb-border)] text-[var(--sb-text-muted)]"
           }`}
         >
           {badge}
@@ -988,7 +1043,7 @@ function SelectedPanel({
                   onClick={() => onViewLayer?.(key)}
                   className={`mt-0.5 flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded-[7px] border-0 p-0 transition-colors duration-100 ${
                     isShowing
-                      ? "bg-[var(--sb-accent)] text-white"
+                      ? "bg-[var(--sb-accent)] text-[var(--sb-on-accent)]"
                       : "bg-transparent text-[var(--sb-accent)] hover:bg-[var(--sb-accent)]/15"
                   }`}
                 >

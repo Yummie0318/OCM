@@ -483,8 +483,8 @@ export default function NotificationBell({ compact = false, onSelectLog, refresh
         <Bell size={compact ? 16 : 15} />
         {count > 0 && (
           <span
-            className="absolute -right-0.5 -top-0.5 flex h-[16px] min-w-[16px] items-center justify-center rounded-full px-1 text-[9px] font-bold tabular-nums text-white"
-            style={{ background: theme.accent }}
+            className="absolute -right-0.5 -top-0.5 flex h-[16px] min-w-[16px] items-center justify-center rounded-full px-1 text-[9px] font-bold tabular-nums"
+            style={{ background: theme.accent, color: theme.onAccent }}
           >
             {badgeText}
           </span>

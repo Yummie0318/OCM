@@ -521,7 +521,7 @@ export default function LotEditor({ lots, onChange, controlPoint }: Props) {
                       className="border-0 px-2.5 py-1 text-[10.5px] font-semibold transition-colors"
                       style={{
                         background: mode === value ? "var(--sb-accent)" : "transparent",
-                        color: mode === value ? "#fff" : "var(--sb-text)",
+                        color: mode === value ? "var(--sb-on-accent)" : "var(--sb-text)",
                       }}
                     >
                       {label}
@@ -717,8 +717,8 @@ export default function LotEditor({ lots, onChange, controlPoint }: Props) {
       <button
         type="button"
         onClick={addLot}
-        className="flex items-center justify-center gap-1.5 rounded-full border-0 px-3 py-[9px] text-[12.5px] font-semibold text-white transition-opacity hover:opacity-90"
-        style={{ background: "var(--sb-accent)" }}
+        className="flex items-center justify-center gap-1.5 rounded-full border-0 px-3 py-[9px] text-[12.5px] font-semibold transition-opacity hover:opacity-90"
+        style={{ background: "var(--sb-accent)", color: "var(--sb-on-accent)" }}
       >
         <Plus size={13} /> Add lot
       </button>

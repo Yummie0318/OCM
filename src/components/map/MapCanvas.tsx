@@ -166,7 +166,7 @@ interface FocusFeatureRequest {
 // Identifiers for the basemap options the user can switch between. Kept
 // as a union (not a plain string) so page.tsx gets autocomplete/type
 // safety when reading/writing the persisted choice.
-export type BasemapId = "light" | "streets" | "dark" | "satellite";
+export type BasemapId = "light" | "streets" | "dark" | "satellite" | "blank";
 
 interface Props {
   features: LotFeature[];
@@ -194,6 +194,10 @@ interface Props {
   // Which basemap tile set to render. Optional, defaults to "light" (the
   // old fixed Positron look), so existing callers don't need to change.
   basemapId?: BasemapId;
+  // Background color shown when the "blank" basemap is selected. Owned by
+  // the page so it can follow the light/dark theme. Optional; falls back
+  // to BLANK_BACKGROUND_COLOR.
+  blankColor?: string;
 }
 
 // Rough center of the Philippines — used only before any data is loaded.
@@ -246,6 +250,9 @@ interface BasemapConfig {
   // to a lower level in most areas. Kept per-basemap (rather than one
   // shared constant) since the two providers differ here.
   maxzoom: number;
+    // When true, the raster basemap layer is hidden and only the plain
+  // background color shows (no tiles are requested).
+  isBlank?: boolean;
 }
 
 // Tile sources:
@@ -284,9 +291,22 @@ export const BASEMAPS: Record<BasemapId, BasemapConfig> = {
     attribution: "Imagery &copy; Esri",
     maxzoom: 19,
   },
+    blank: {
+    label: "Blank",
+    // Placeholder so the raster source stays valid; never fetched because
+    // the raster layer is hidden while blank is active.
+    tiles: cartoTiles("light_all"),
+    attribution: "",
+    maxzoom: 20,
+    isBlank: true,
+  },
 };
 
-function buildMapStyle(basemapId: BasemapId) {
+// Color shown when the "Blank" basemap is selected (the raster tile layer
+// is hidden and this background layer shows through).
+const BLANK_BACKGROUND_COLOR = "#ffffff";
+
+function buildMapStyle(basemapId: BasemapId, blankColor: string = BLANK_BACKGROUND_COLOR) {
   const basemap = BASEMAPS[basemapId];
   return {
     version: 8 as const,
@@ -301,9 +321,17 @@ function buildMapStyle(basemapId: BasemapId) {
     },
     layers: [
       {
+        id: "basemap-background",
+        type: "background" as const,
+        paint: { "background-color": blankColor },
+      },
+      {
         id: "basemap-tiles",
         type: "raster" as const,
         source: BASEMAP_SOURCE_ID,
+        layout: {
+          visibility: basemap.isBlank ? ("none" as const) : ("visible" as const),
+        },
       },
     ],
   };
@@ -514,6 +542,7 @@ export default function MapCanvas({
   onFeatureClick,
   lotColors,
   basemapId = "light",
+  blankColor = BLANK_BACKGROUND_COLOR,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -534,6 +563,8 @@ export default function MapCanvas({
   focusPointRef.current = focusPoint;
   const basemapIdRef = useRef(basemapId);
   basemapIdRef.current = basemapId;
+    const blankColorRef = useRef(blankColor);
+  blankColorRef.current = blankColor;
   // Same ref-mirroring trick as above, so the click handler registered
   // once inside "load" always calls whatever onFeatureClick the page
   // currently has (a fresh function identity most renders), instead of
@@ -565,7 +596,7 @@ export default function MapCanvas({
         // Built from whichever basemap was selected at the moment the map
         // is first constructed. Later changes go through the setTiles()
         // effect below, not a rebuild.
-        style: buildMapStyle(basemapIdRef.current),
+        style: buildMapStyle(basemapIdRef.current, blankColorRef.current),
         center: DEFAULT_CENTER,
         zoom: DEFAULT_ZOOM,
       });
@@ -595,6 +626,9 @@ export default function MapCanvas({
         map.addSource(SOURCE_ID, {
           type: "geojson",
           data: { type: "FeatureCollection", features: [] },
+          // 0 = no geometry simplification, so tiny polygons aren't
+          // collapsed and dropped when zoomed far out.
+          tolerance: 0,
         });
 
         map.addLayer({
@@ -605,7 +639,16 @@ export default function MapCanvas({
             // Per-lot color, baked into properties.__color by setFeatures().
             // Falls back to the default blue when a lot has no color set.
             "fill-color": ["coalesce", ["get", "__color"], DEFAULT_FILL_COLOR],
-            "fill-opacity": 0.35,
+            // Nearly solid when zoomed far out (so tiny lots read as a
+            // colored patch), easing to the normal see-through look up close.
+            "fill-opacity": [
+              "interpolate",
+              ["linear"],
+              ["zoom"],
+              5, 0.9,
+              12, 0.6,
+              16, 0.35,
+            ],
           },
         });
 
@@ -620,7 +663,16 @@ export default function MapCanvas({
             // missing before: this layer used to be hardcoded to a fixed
             // blue and never looked at __color at all.
             "line-color": ["coalesce", ["get", "__color"], DEFAULT_LINE_COLOR],
-            "line-width": 2,
+            // Thicker outline far out so small lots stay visible; back to
+            // 2px once zoomed in.
+            "line-width": [
+              "interpolate",
+              ["linear"],
+              ["zoom"],
+              5, 3.5,
+              12, 2.5,
+              16, 2,
+            ],
           },
         });
 
@@ -653,7 +705,14 @@ export default function MapCanvas({
           filter: ["==", ["id"], -1],
           paint: {
             "line-color": ["coalesce", ["get", "__color"], DEFAULT_HIGHLIGHT_LINE_COLOR],
-            "line-width": 4,
+            "line-width": [
+              "interpolate",
+              ["linear"],
+              ["zoom"],
+              5, 6,
+              12, 5,
+              16, 4,
+            ],
             "line-opacity": 1,
           },
         });
@@ -721,6 +780,9 @@ export default function MapCanvas({
         });
 
         loadedRef.current = true;
+                if (map.getLayer("basemap-background")) {
+          map.setPaintProperty("basemap-background", "background-color", blankColorRef.current);
+        }
         // Apply whatever features/colors arrived before the style finished
         // loading. Read from refs (not the closed-over props) since this
         // callback only fires once, on initial style load.
@@ -891,12 +953,39 @@ export default function MapCanvas({
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !loadedRef.current) return;
-    const source = map.getSource(BASEMAP_SOURCE_ID);
-    if (source && typeof source.setTiles === "function") {
-      source.setTiles(BASEMAPS[basemapId].tiles);
+
+    const config = BASEMAPS[basemapId];
+
+    // Blank hides the raster layer so the white background layer beneath
+    // shows through. Every other basemap shows it again.
+    if (map.getLayer("basemap-tiles")) {
+      map.setLayoutProperty(
+        "basemap-tiles",
+        "visibility",
+        config.isBlank ? "none" : "visible"
+      );
+    }
+
+    // Only repoint tiles for real basemaps.
+    if (!config.isBlank) {
+      const source = map.getSource(BASEMAP_SOURCE_ID);
+      if (source && typeof source.setTiles === "function") {
+        source.setTiles(config.tiles);
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [basemapId]);
+  
+  // Keep the blank basemap's background in sync with the light/dark theme.
+  // Only touches the paint color of the background layer, so lot layers,
+  // tiles, and click handlers are unaffected.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !loadedRef.current) return;
+    if (map.getLayer("basemap-background")) {
+      map.setPaintProperty("basemap-background", "background-color", blankColor);
+    }
+  }, [blankColor]);
 
   return <div ref={containerRef} style={{ width: "100%", height: "100%", position: "relative" }} />;
 }

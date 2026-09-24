@@ -289,7 +289,7 @@ function ItemCheckbox({ checked, onChange }: { checked: boolean; onChange: () =>
         background: checked ? "var(--sb-accent)" : "var(--sb-bg)",
       }}
     >
-      {checked && <Check size={11} strokeWidth={3} color="white" />}
+      {checked && <Check size={11} strokeWidth={3} style={{ color: "var(--sb-on-accent)" }} />}
     </button>
   );
 }
@@ -636,7 +636,7 @@ export default function ProjectionModal({
                   {count > 0 && (
                     <span
                       className={`flex h-4 min-w-4 flex-shrink-0 items-center justify-center rounded-full px-1 text-[9px] font-bold tabular-nums ${
-                        isActive ? "bg-[var(--sb-accent)] text-white" : "bg-[var(--sb-border)] text-[var(--sb-text-muted)]"
+                        isActive ? "bg-[var(--sb-accent)] text-[var(--sb-on-accent)]" : "bg-[var(--sb-border)] text-[var(--sb-text-muted)]"
                       }`}
                     >
                       {count}
@@ -774,8 +774,8 @@ export default function ProjectionModal({
                 type="button"
                 onClick={handleApply}
                 disabled={totalSelectedCount === 0}
-                className="flex-1 rounded-full border-0 px-3 py-[7px] text-[11.5px] font-semibold text-white transition-opacity duration-100 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 sm:flex-none sm:px-3.5"
-                style={{ background: theme.accent }}
+                className="flex-1 rounded-full border-0 px-3 py-[7px] text-[11.5px] font-semibold transition-opacity duration-100 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 sm:flex-none sm:px-3.5"
+                style={{ background: theme.accent, color: theme.onAccent }}
               >
                 Project
               </button>
