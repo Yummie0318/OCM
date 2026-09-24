@@ -1312,7 +1312,7 @@ function SheetsTable({
               <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{g.encodedBy || "—"}</td>
               {onViewSheet && (
                 <td className="px-2.5 py-[6px]" onClick={(e) => e.stopPropagation()}>
-                  <Tooltip label="Preview whole sheet — all lots + coordinates">
+                  <Tooltip label="Lot Preview">
                     <button
                       type="button"
                       onClick={() =>
