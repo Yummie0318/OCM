@@ -318,6 +318,36 @@ function escapeHtml(value: unknown): string {
     .replace(/"/g, "&quot;");
 }
 
+// Formats an ISO date string (e.g. "2026-03-03T00:00:00.000Z") as
+// "March 3, 2026". Mirrors formatDate() in AttributeTable.tsx so the
+// popup and the table show dates the same way. timeZone: "UTC" keeps the
+// day from shifting for users in timezones behind UTC.
+function formatDate(value: unknown): string {
+  if (!value) return "—";
+  const d = new Date(String(value));
+  if (isNaN(d.getTime())) return String(value);
+  return d.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+
+// Formats an area value to exactly 2 decimals, e.g.
+// 207.5396728515625 -> "207.54". Mirrors formatArea() in AttributeTable.tsx.
+function formatArea(value: unknown): string {
+  if (value == null || value === "") return "—";
+  const n = Number(value);
+  if (!Number.isFinite(n)) return String(value);
+  return n.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+
 // Injects the popup's themed styling once per page load. Guarded by an id
 // check so remounts (e.g. React strict-mode double-invoke, or navigating
 // away and back) don't stack duplicate <style> tags. Uses the app's
@@ -447,9 +477,9 @@ function buildPopupHtml(p: Record<string, unknown>): string {
   const location = escapeHtml([p.barangay, p.municipality, p.province].filter(Boolean).join(", ")) || "—";
   const surveyNo = escapeHtml(p.surveyNo ?? "—");
   const patentNo = escapeHtml(p.patentNo ?? "—");
-  const dateSurveyed = escapeHtml(p.dateSurveyed ?? "—");
+  const dateSurveyed = escapeHtml(formatDate(p.dateSurveyed));   // <- CHANGED
   const surveyor = escapeHtml(p.surveyor ?? "—");
-  const areaSqm = p.areaSqm != null ? `${escapeHtml(p.areaSqm)} sq.m.` : "—";
+  const areaSqm = p.areaSqm != null && p.areaSqm !== "" ? `${escapeHtml(formatArea(p.areaSqm))} sq.m.` : "—";
   const planUrl = typeof p.planUrl === "string" ? p.planUrl : null;
 
   return `

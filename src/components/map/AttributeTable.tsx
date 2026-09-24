@@ -167,8 +167,17 @@ const LOT_COLUMNS = [
 
 const NUMERIC_COLUMNS = new Set(["Area (sq.m.)"]);
 
-function formatArea(n: number) {
-  return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+// Always shows exactly 2 decimals (e.g. 207.5396728515625 -> "207.54").
+// Accepts unknown because areaSqm can arrive as a number, a numeric
+// string, or null depending on the API/database driver.
+function formatArea(value: unknown): string {
+  if (value == null || value === "") return "—";
+  const n = Number(value);
+  if (!Number.isFinite(n)) return String(value);
+  return n.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 }
 
 function formatDate(value: string | null | undefined): string {
@@ -1479,7 +1488,7 @@ function LotsTable({
               </td>
               <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{f.properties.surveyor}</td>
               <td className="px-2.5 py-[6px] text-right tabular-nums text-[var(--sb-text-muted)]">
-                {f.properties.areaSqm}
+               {formatArea(f.properties.areaSqm)}
               </td>
               <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{f.properties.patentNo}</td>
               <td className="max-w-[160px] px-2.5 py-[6px] text-[var(--sb-text-muted)]">
