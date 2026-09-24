@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ControlPoint, PRS92Zone } from "@/types";
 import { ALL_ZONES, getZoneInfo } from "@/lib/coordTransform";
 import ControlPointPicker from "@/components/ControlPointPicker";
@@ -16,6 +16,40 @@ export const inputCls =
 interface Props {
   value: ControlPoint;
   onChange: (cp: ControlPoint) => void;
+}
+
+/**
+ * Number input that keeps what the person is typing. The parent state is a
+ * plain number, so a cleared field would otherwise snap straight back to "0"
+ * and could never be erased and retyped. It re-syncs whenever the value is
+ * changed from outside (e.g. picking a saved control point).
+ */
+function NumInput({ value, onChange }: { value: number; onChange: (n: number) => void }) {
+  const [draft, setDraft] = useState(String(value));
+  const lastSent = useRef(value);
+
+  useEffect(() => {
+    if (value !== lastSent.current) {
+      lastSent.current = value;
+      setDraft(String(value));
+    }
+  }, [value]);
+
+  return (
+    <input
+      className={inputCls}
+      type="number"
+      step="any"
+      value={draft}
+      onChange={(e) => {
+        const text = e.target.value;
+        setDraft(text);
+        const n = text === "" || isNaN(Number(text)) ? 0 : Number(text);
+        lastSent.current = n;
+        onChange(n);
+      }}
+    />
+  );
 }
 
 export default function ControlPointForm({ value, onChange }: Props) {
@@ -37,6 +71,8 @@ export default function ControlPointForm({ value, onChange }: Props) {
       lpcsEasting: Number(row.lpcs_easting),
       ppcsNorthing: Number(row.ppcs_northing),
       ppcsEasting: Number(row.ppcs_easting),
+      // All saved control points are treated as PRS92 Zone 3. If a row ever
+      // carries its own zone, use that here instead.
       zone: FIXED_ZONE,
     });
     setManualOpen(false);
@@ -122,19 +158,19 @@ export default function ControlPointForm({ value, onChange }: Props) {
           <div className="grid grid-cols-2 gap-2.5">
             <label className={labelCls}>
               LPCS Northing
-              <input className={inputCls} type="number" step="any" value={value.lpcsNorthing} onChange={(e) => update("lpcsNorthing", Number(e.target.value))} />
+              <NumInput value={value.lpcsNorthing} onChange={(n) => update("lpcsNorthing", n)} />
             </label>
             <label className={labelCls}>
               LPCS Easting
-              <input className={inputCls} type="number" step="any" value={value.lpcsEasting} onChange={(e) => update("lpcsEasting", Number(e.target.value))} />
+              <NumInput value={value.lpcsEasting} onChange={(n) => update("lpcsEasting", n)} />
             </label>
             <label className={labelCls}>
               PPCS Northing
-              <input className={inputCls} type="number" step="any" value={value.ppcsNorthing} onChange={(e) => update("ppcsNorthing", Number(e.target.value))} />
+              <NumInput value={value.ppcsNorthing} onChange={(n) => update("ppcsNorthing", n)} />
             </label>
             <label className={labelCls}>
               PPCS Easting
-              <input className={inputCls} type="number" step="any" value={value.ppcsEasting} onChange={(e) => update("ppcsEasting", Number(e.target.value))} />
+              <NumInput value={value.ppcsEasting} onChange={(n) => update("ppcsEasting", n)} />
             </label>
           </div>
 

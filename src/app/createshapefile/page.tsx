@@ -68,7 +68,7 @@ export default function Home() {
         <div className="layout">
           <div className="form-column">
             <ControlPointForm value={controlPoint} onChange={setControlPoint} />
-            <LotEditor lots={lots} onChange={setLots} />
+            <LotEditor lots={lots} onChange={setLots} controlPoint={controlPoint} />
           </div>
 
           <div className="map-column panel">

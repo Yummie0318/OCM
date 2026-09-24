@@ -109,7 +109,7 @@ export default function CreateShapefileModal({ open, onClose }: Props) {
           <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
             <div className="flex min-w-0 flex-col gap-4">
               <ControlPointForm value={controlPoint} onChange={setControlPoint} />
-              <LotEditor lots={lots} onChange={setLots} />
+             <LotEditor lots={lots} onChange={setLots} controlPoint={controlPoint} />
             </div>
 
             <div className="min-w-0">

@@ -17,26 +17,43 @@ export default function ControlPointPicker({ onSelect }: Props) {
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const boxRef = useRef<HTMLDivElement>(null);
+  // Set right before we programmatically fill the box after a selection, so
+  // that change doesn't trigger another search (which reopened the dropdown).
+  const skipNextSearch = useRef(false);
 
   useEffect(() => {
+    if (skipNextSearch.current) {
+      skipNextSearch.current = false;
+      return;
+    }
     if (query.trim().length < 2) {
       setResults([]);
       setError(null);
+      setLoading(false);
       return;
     }
     setLoading(true);
+    let cancelled = false;
     const handle = setTimeout(() => {
       fetch(`/api/control-points?q=${encodeURIComponent(query.trim())}`)
         .then((r) => r.json())
         .then((data) => {
+          if (cancelled) return;
           setResults(data.rows || []);
           setError(data.error || null);
           setOpen(true);
         })
-        .catch(() => setError("Search failed."))
-        .finally(() => setLoading(false));
+        .catch(() => {
+          if (!cancelled) setError("Search failed.");
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
     }, 250);
-    return () => clearTimeout(handle);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
   }, [query]);
 
   useEffect(() => {
@@ -78,6 +95,7 @@ export default function ControlPointPicker({ onSelect }: Props) {
                 type="button"
                 onClick={() => {
                   onSelect(row);
+                  skipNextSearch.current = true;
                   setQuery(`${row.tie_point_name} - ${row.municipality_name}`);
                   setOpen(false);
                 }}
