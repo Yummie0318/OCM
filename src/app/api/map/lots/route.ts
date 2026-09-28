@@ -220,7 +220,7 @@ function parsePrefixList(value: string | null): string[] | null {
   for (const part of value.split(",")) {
     const trimmed = part.trim().toUpperCase();
     if (trimmed === "") continue;
-    if (!/^[A-Z]{2,6}$/.test(trimmed)) return null;
+    if (!/^[A-Z]{1,6}$/.test(trimmed)) return null;
     out.push(trimmed);
   }
   return out;
