@@ -181,6 +181,7 @@ import {
   Bell,
   Filter,
   Download,
+  Users,
 } from "lucide-react";
 import type { SelectionMeta, TreeNodeData, LotSearchResult } from "@/lib/geo";
 import { uiFont, ACCENT_PRESETS, type SidebarTheme } from "./sidebarTheme";
@@ -241,6 +242,8 @@ onCreateShapefile: () => void;
    * municipalitiesRefreshKey.
    */
   notificationsRefreshKey?: number;
+  /** Opens the user-management modal. Only shown to superadmins. */
+  onOpenUserManagement?: () => void;
 }
 
 // Hairline helpers — draw borders at reduced opacity against the theme's
@@ -421,6 +424,7 @@ export default function Sidebar({
   municipalitiesRefreshKey,
   onActivityLogSelect,
   notificationsRefreshKey,
+  onOpenUserManagement,
 }: SidebarProps) {
   const [municipalities, setMunicipalities] = useState<TreeNodeData[] | null>(null);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
@@ -432,6 +436,11 @@ export default function Sidebar({
 
   const accountRef = useRef<HTMLDivElement>(null);
   const { darkMode, toggleDarkMode, accentColor, setAccentColor, theme, vars } = useSidebarTheme();
+
+  // Hidden until the role is known, so a "user" never sees these flash in.
+  // To make surveyors view-only too, remove `|| userType === "surveyor"`.
+  const canWrite = userType === "superadmin" || userType === "admin" || userType === "surveyor";
+  const canManageUsers = userType === "superadmin" && !!onOpenUserManagement;
 
   // Re-runs on mount AND whenever the parent bumps municipalitiesRefreshKey
   // (e.g. right after a lot sheet save succeeds), so newly-saved lots show
@@ -555,6 +564,20 @@ export default function Sidebar({
               </div>
             </div>
 
+            {canManageUsers && (
+              <button
+                type="button"
+                onClick={() => {
+                  setAccountMenuOpen(false);
+                  onOpenUserManagement?.();
+                }}
+                className={menuItemClass}
+              >
+                <Users size={14} />
+                User management
+              </button>
+            )}
+
             <button type="button" onClick={toggleDarkMode} className={menuItemClass}>
               {darkMode ? <Moon size={14} /> : <Sun size={14} />}
               {darkMode ? "Dark mode" : "Light mode"}
@@ -629,7 +652,9 @@ export default function Sidebar({
                 <div className="truncate text-[10.5px] text-[var(--sb-text-faint)]">{userEmail}</div>
               </div>
             </button>
-            <NotificationBell onSelectLog={onActivityLogSelect} refreshKey={notificationsRefreshKey} />
+            {canWrite && (
+              <NotificationBell onSelectLog={onActivityLogSelect} refreshKey={notificationsRefreshKey} />
+            )}
           </div>
         )}
       </div>
@@ -652,11 +677,13 @@ export default function Sidebar({
           </button>
         </Tooltip>
 
-      <Tooltip label="Create Shapefile" side="right">
-        <button type="button" onClick={onCreateShapefile} className={`mt-1.5 ${iconBtnClass("lg")}`}>
-          <FilePlus2 size={16} />
-        </button>
-      </Tooltip>
+        {canWrite && (
+          <Tooltip label="Create Shapefile" side="right">
+            <button type="button" onClick={onCreateShapefile} className={`mt-1.5 ${iconBtnClass("lg")}`}>
+              <FilePlus2 size={16} />
+            </button>
+          </Tooltip>
+        )}
 
         {/* Rail didn't have any way to reach search before — clicking this
             pins the sidebar open (same as the expand button above) so the
@@ -730,9 +757,11 @@ export default function Sidebar({
 
         {/* Notification bell — sits just above the account footer, next
             to where the user's profile lives. */}
-        <div className="mt-1.5">
-          <NotificationBell compact onSelectLog={onActivityLogSelect} refreshKey={notificationsRefreshKey} />
-        </div>
+        {canWrite && (
+          <div className="mt-1.5">
+            <NotificationBell compact onSelectLog={onActivityLogSelect} refreshKey={notificationsRefreshKey} />
+          </div>
+        )}
 
         {AccountFooter({ compact: true })}
         <style>{`@keyframes sidebar-pulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }`}</style>
@@ -787,15 +816,17 @@ export default function Sidebar({
       </div>
 
       {/* Create Shapefile */}
-      <button
-        type="button"
-        onClick={onCreateShapefile}
-        className="mb-2.5 flex flex-shrink-0 items-center justify-center gap-2 rounded-full border-0 px-3 py-[9px] text-[12.5px] font-semibold shadow-sm transition-opacity duration-100 hover:opacity-90"
-        style={{ background: theme.accent, color: theme.onAccent }}
-      >
-        <FilePlus2 size={14} />
-        Create Shapefile
-      </button>
+      {canWrite && (
+        <button
+          type="button"
+          onClick={onCreateShapefile}
+          className="mb-2.5 flex flex-shrink-0 items-center justify-center gap-2 rounded-full border-0 px-3 py-[9px] text-[12.5px] font-semibold shadow-sm transition-opacity duration-100 hover:opacity-90"
+          style={{ background: theme.accent, color: theme.onAccent }}
+        >
+          <FilePlus2 size={14} />
+          Create Shapefile
+        </button>
+      )}
 
       {/* Search */}
       <div className="mb-3 flex-shrink-0">

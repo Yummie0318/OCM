@@ -11,11 +11,28 @@
 // Runs on the Edge runtime, which is why auth.ts uses `jose` instead of a
 // Node-only JWT library -- bcryptjs (used for password hashing) is only
 // ever imported by the login/register route handlers, never by this file.
+//
+// BACK-BUTTON AFTER LOGOUT FIX: every response for a protected page/route
+// now carries Cache-Control: no-store. Without it, the browser keeps the
+// page in its cache / back-forward cache, so pressing Back after logging
+// out restores the old /map screen from memory without ever contacting the
+// server -- meaning this middleware never runs and can't redirect. With
+// no-store, the browser must re-request the page on Back, the cookie is
+// gone, and the visitor is sent to the login page.
 
 import { NextRequest, NextResponse } from "next/server";
 import { AUTH_COOKIE_NAME, verifySession } from "@/lib/auth";
 
-const PUBLIC_PATHS = ["/", "/api/auth/login", "/api/auth/register", "/api/auth/logout"];
+const PUBLIC_PATHS = ["/", "/api/auth/login", "/api/auth/logout"];
+
+// Applies the no-cache headers to any response we return for a protected
+// page (or the redirect away from one).
+function withNoStore(response: NextResponse): NextResponse {
+  response.headers.set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+  response.headers.set("Pragma", "no-cache");
+  response.headers.set("Expires", "0");
+  return response;
+}
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -27,18 +44,22 @@ export async function middleware(request: NextRequest) {
   if (isPublic) {
     // Already signed in and revisiting the login page? Skip straight to the map.
     if (pathname === "/" && session) {
-      return NextResponse.redirect(new URL("/map", request.url));
+      return withNoStore(NextResponse.redirect(new URL("/map", request.url)));
     }
-    return NextResponse.next();
+    // The login page itself is also no-store, so Back from /map after a
+    // logout can't show a stale, cached copy of the login page either.
+    return withNoStore(NextResponse.next());
   }
 
   if (!session) {
     const loginUrl = new URL("/", request.url);
     loginUrl.searchParams.set("next", pathname);
-    return NextResponse.redirect(loginUrl);
+    return withNoStore(NextResponse.redirect(loginUrl));
   }
 
-  return NextResponse.next();
+  // Signed in, protected page: allow it, but forbid the browser from
+  // caching it (this is the part that fixes the Back button).
+  return withNoStore(NextResponse.next());
 }
 
 // Runs on everything except Next's internal static/image assets and favicon

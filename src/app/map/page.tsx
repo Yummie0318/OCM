@@ -203,6 +203,8 @@ import type { LotFeature, SelectionMeta, LotSearchResult } from "@/lib/geo";
 import type { ActivityLogRow } from "@/components/NotificationBell";
 import CreateShapefileModal from "@/components/CreateShapefileModal";
 import DownloadLayerModal from "@/components/map/DownloadLayerModal";
+import UsersModal from "@/components/map/UsersModal";
+
 
 const SIDEBAR_MIN_WIDTH = 220;
 const SIDEBAR_MAX_WIDTH = 480;
@@ -358,10 +360,22 @@ function MapViewerPageInner() {
   // in practice since middleware.ts already keeps unauthenticated visitors
   // off this page entirely.
   const [currentUser, setCurrentUser] = useState<{
+    id: number;
     username: string;
     email: string;
     usertype: string;
+    mustChangePassword?: boolean;
   } | null>(null);
+
+  // Opens the superadmin-only user management modal.
+  const [usersModalOpen, setUsersModalOpen] = useState(false);
+
+  // Only "user" accounts are view-only. Keep in sync with `canWrite` in
+  // Sidebar.tsx. To make surveyors view-only too, remove the surveyor line.
+  const canEditData =
+    currentUser?.usertype === "superadmin" ||
+    currentUser?.usertype === "admin" ||
+    currentUser?.usertype === "surveyor";
 
   // id (stringified) -> hex color. Owned here so both AttributeTable
   // (which writes to it via a swatch click) and MapCanvas (which reads it
@@ -397,10 +411,24 @@ function MapViewerPageInner() {
   useEffect(() => {
     fetch("/api/auth/me")
       .then((r) => r.json())
-      .then((d) => setCurrentUser(d.user))
+      .then((d) => {
+        if (d.user?.mustChangePassword) {
+          window.location.href = "/change-password";
+          return;
+        }
+        setCurrentUser(d.user);
+      })
       .catch(() => setCurrentUser(null));
   }, []);
 
+
+  useEffect(() => {
+  const onPageShow = (e: PageTransitionEvent) => {
+    if (e.persisted) window.location.reload();
+  };
+  window.addEventListener("pageshow", onPageShow);
+  return () => window.removeEventListener("pageshow", onPageShow);
+}, []);
   // Restore persisted sidebar width/collapsed state + table height/visibility
   // + detail panel width + basemap choice on mount.
   useEffect(() => {
@@ -1231,6 +1259,10 @@ function MapViewerPageInner() {
               collapsed={false}
               onToggleCollapsed={toggleCollapsed}
               onCloseMobile={() => setMobileOpen(false)}
+              onOpenUserManagement={() => {
+                setUsersModalOpen(true);
+                setMobileOpen(false);
+              }}
               onLogout={handleLogout}
               userName={currentUser?.username}
               userEmail={currentUser?.email}
@@ -1277,6 +1309,7 @@ function MapViewerPageInner() {
                 activeSelections={activeSelections}
                 onToggle={handleToggle}
                 collapsed={isPeeking ? false : sidebarCollapsed}
+                onOpenUserManagement={() => setUsersModalOpen(true)}
                 onToggleCollapsed={toggleCollapsed}
                 onLogout={handleLogout}
                 userName={currentUser?.username}
@@ -1492,10 +1525,10 @@ function MapViewerPageInner() {
                   lotColors={lotColors}
                   onSetLotColors={handleSetLotColors}
                   onViewSheet={viewSheetInPanel}
-                  onUpdatePlanUrl={handleUpdatePlanUrl}
-                  onUpdateSurveyNo={handleUpdateSurveyNo}
-                  onUpdateDocumentsUrl={handleUpdateDocumentsUrl}
-                  onUpdateSurveyClass={handleUpdateSurveyClass}
+                  onUpdatePlanUrl={canEditData ? handleUpdatePlanUrl : undefined}
+                  onUpdateSurveyNo={canEditData ? handleUpdateSurveyNo : undefined}
+                  onUpdateDocumentsUrl={canEditData ? handleUpdateDocumentsUrl : undefined}
+                  onUpdateSurveyClass={canEditData ? handleUpdateSurveyClass : undefined}
                 />
               </div>
             )}
@@ -1512,6 +1545,13 @@ function MapViewerPageInner() {
         label={downloadKey ? activeSelections[downloadKey]?.label ?? "Layer" : ""}
         features={downloadKey ? layerData[downloadKey] : undefined}
       />
+      {currentUser?.usertype === "superadmin" && (
+        <UsersModal
+          open={usersModalOpen}
+          onClose={() => setUsersModalOpen(false)}
+          currentUserId={currentUser.id}
+        />
+      )}
     </main>
   );
 }

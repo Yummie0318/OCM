@@ -49,8 +49,8 @@ function LoginPage() {
         return;
       }
 
-      router.push("/map");
-      router.refresh();
+        router.push(data.mustChangePassword ? "/change-password" : "/map");
+        router.refresh();
     } catch {
       setError("Couldn't reach the server. Check your connection and try again.");
       setSubmitting(false);

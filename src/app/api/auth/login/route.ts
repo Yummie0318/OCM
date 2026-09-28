@@ -2,13 +2,16 @@
 //
 // POST { identifier, password } -> sets an httpOnly session cookie and
 // returns the (non-sensitive) user fields. `identifier` can be either the
-// username or the email -- one field, matched against both columns, so the
-// login form doesn't need to make the user pick which one they're typing.
+// username or the email.
 //
-// Deliberately returns the SAME error message whether the account doesn't
-// exist or the password is wrong ("Invalid username/email or password").
-// Returning different messages for each case lets an attacker enumerate
-// which usernames/emails have accounts just by trying them one at a time.
+// Changes from the previous version:
+//   - email match is case-insensitive
+//   - records last_login_at
+//   - returns mustChangePassword so the login page can send the user to a
+//     "set a new password" screen instead of /map
+//
+// Still returns the SAME error for unknown account and wrong password, to
+// prevent username/email enumeration.
 
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
@@ -35,9 +38,9 @@ export async function POST(request: Request) {
 
   const pool = getPool();
   const { rows } = await pool.query(
-    `SELECT id, username, email, password, usertype, is_active
+    `SELECT id, username, email, password, usertype, is_active, must_change_password
      FROM users
-     WHERE username = $1 OR email = $1
+     WHERE username = $1 OR LOWER(email) = LOWER($1)
      LIMIT 1`,
     [identifier]
   );
@@ -47,12 +50,17 @@ export async function POST(request: Request) {
     NextResponse.json({ error: "Invalid username/email or password." }, { status: 401 });
 
   if (!user) return invalidCredentials();
+
+  // Check the password BEFORE revealing that the account is disabled,
+  // otherwise anyone could probe which accounts exist and are disabled.
+  const passwordMatches = await bcrypt.compare(password, user.password);
+  if (!passwordMatches) return invalidCredentials();
+
   if (!user.is_active) {
     return NextResponse.json({ error: "This account has been disabled." }, { status: 403 });
   }
 
-  const passwordMatches = await bcrypt.compare(password, user.password);
-  if (!passwordMatches) return invalidCredentials();
+  await pool.query("UPDATE users SET last_login_at = now() WHERE id = $1", [user.id]);
 
   const token = await signSession({
     userId: user.id,
@@ -68,6 +76,7 @@ export async function POST(request: Request) {
       email: user.email,
       usertype: user.usertype,
     },
+    mustChangePassword: user.must_change_password,
   });
 
   response.cookies.set(AUTH_COOKIE_NAME, token, {
