@@ -195,7 +195,11 @@ import { useRouter } from "next/navigation";
 import { Menu, ChevronDown, ChevronUp, Table2, Sun, Map as MapIcon, Moon, Satellite, Square } from "lucide-react";
 import Sidebar from "@/components/map/Sidebar";
 import MapCanvas, { BASEMAPS, type BasemapId } from "@/components/map/MapCanvas";
-import AttributeTable, { type SheetPreviewRequest } from "@/components/map/AttributeTable";
+import AttributeTable, {
+  type SheetPreviewRequest,
+  type SheetEditValues,
+  type LotEditValues,
+} from "@/components/map/AttributeTable";
 import LotDetailPanel from "@/components/map/LotDetailPanel";
 import { SidebarThemeProvider, useSidebarTheme } from "@/components/map/SidebarThemeContext";
 import { uiFont } from "@/components/map/sidebarTheme";
@@ -204,6 +208,7 @@ import type { ActivityLogRow } from "@/components/NotificationBell";
 import CreateShapefileModal from "@/components/CreateShapefileModal";
 import DownloadLayerModal from "@/components/map/DownloadLayerModal";
 import UsersModal from "@/components/map/UsersModal";
+import { toast } from "@/components/notifications/Toaster";
 
 
 const SIDEBAR_MIN_WIDTH = 220;
@@ -376,6 +381,21 @@ function MapViewerPageInner() {
     currentUser?.usertype === "superadmin" ||
     currentUser?.usertype === "admin" ||
     currentUser?.usertype === "surveyor";
+
+  
+  // Superadmin-only: full edit of lot sheets and lots (overwrite/clear, not
+  // just fill-in-missing). The API enforces this too (requireSuperAdmin).
+  const isSuperAdmin = currentUser?.usertype === "superadmin";
+  const isAdmin = currentUser?.usertype === "admin";
+
+  // Superadmin edits everything. An admin edits only records they encoded.
+  // Assumes the table's "Encoded By" value is the username. The API does the
+  // real check either way.
+  const canEditRecord = (encodedBy: string | null | undefined) =>
+    isSuperAdmin ||
+    (isAdmin &&
+      !!encodedBy &&
+      String(encodedBy).trim().toLowerCase() === (currentUser?.username ?? "").trim().toLowerCase());
 
   // id (stringified) -> hex color. Owned here so both AttributeTable
   // (which writes to it via a swatch click) and MapCanvas (which reads it
@@ -689,6 +709,8 @@ function MapViewerPageInner() {
       else next[key] = meta;
       return next;
     });
+    // Unchecked / removed while still loading: close its loading toast.
+    if (meta === null) toast.dismiss(`project:${key}`);
     closeDetail();
   }
 
@@ -831,8 +853,12 @@ function MapViewerPageInner() {
 
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
-      throw new Error(data.error || "Failed to save plan link.");
+      const message = data.error || "Failed to save plan link.";
+      toast.error("Couldn't save plan link", { description: message });
+      throw new Error(message);
     }
+
+    toast.success("Plan link added", { description: "The plan is now linked to this sheet." });
 
     setNotificationsRefreshKey(Date.now());
 
@@ -865,8 +891,12 @@ function MapViewerPageInner() {
 
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
-      throw new Error(data.error || "Failed to save survey number.");
+      const message = data.error || "Failed to save survey number.";
+      toast.error("Couldn't save survey number", { description: message });
+      throw new Error(message);
     }
+
+    toast.success("Survey number added", { description: "Applied to the lots on this sheet that had none." });
 
     setNotificationsRefreshKey(Date.now());
 
@@ -906,8 +936,12 @@ function MapViewerPageInner() {
 
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
-      throw new Error(data.error || "Failed to save documents link.");
+      const message = data.error || "Failed to save documents link.";
+      toast.error("Couldn't save documents link", { description: message });
+      throw new Error(message);
     }
+
+    toast.success("Documents link added", { description: "The documents are now linked to this sheet." });
 
     setNotificationsRefreshKey(Date.now());
 
@@ -941,8 +975,12 @@ function MapViewerPageInner() {
 
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
-      throw new Error(data.error || "Failed to save survey class.");
+      const message = data.error || "Failed to save survey class.";
+      toast.error("Couldn't save survey class", { description: message });
+      throw new Error(message);
     }
+
+    toast.success("Survey class set");
 
     setNotificationsRefreshKey(Date.now());
 
@@ -957,6 +995,156 @@ function MapViewerPageInner() {
       }
       return next;
     });
+  }
+
+    // Superadmin: edit a sheet's own fields (sheet no., plan/documents links,
+  // survey class). PUT /api/lot-sheets/[id], then patch the saved values onto
+  // every loaded feature of that sheet, plus the open detail panel / preview.
+  async function handleEditSheet(sheetId: number, values: SheetEditValues) {
+    const res = await fetch(`/api/lot-sheets/${sheetId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(values),
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      const message = data.error || "Failed to update sheet.";
+      toast.error("Couldn't update sheet", { description: message });
+      throw new Error(message);
+    }
+
+    setNotificationsRefreshKey(Date.now());
+
+    const saved = await res.json();
+    toast.success("Lot sheet updated", { description: `Sheet ${saved.sheetNo} was saved.` });
+    const patch = {
+      sheetNo: saved.sheetNo,
+      planUrl: saved.planUrl,
+      documentsUrl: saved.documentsUrl,
+      surveyClass: saved.surveyClass,
+    };
+    const apply = (f: LotFeature): LotFeature =>
+      Number(f.properties.sheetId) === sheetId
+        ? ({ ...f, properties: { ...f.properties, ...patch } } as LotFeature)
+        : f;
+
+    setLayerData((d) => {
+      const next: typeof d = {};
+      for (const [key, feats] of Object.entries(d)) next[key] = feats.map(apply);
+      return next;
+    });
+    setSelectedFeature((f) => (f ? apply(f) : f));
+    setSheetPreview((p) =>
+      p && p.lots.some((l) => Number(l.properties.sheetId) === sheetId)
+        ? { ...p, sheetNo: patch.sheetNo, lots: p.lots.map(apply) }
+        : p
+    );
+  }
+
+  // Superadmin: edit a single lot's attributes. PATCH /api/lots/[id], then
+  // patch the returned values (including the server-recomputed plan prefix
+  // and RFPA/FPA classification) onto that lot in every loaded layer.
+  async function handleEditLot(lotId: string | number, values: LotEditValues) {
+    const res = await fetch(`/api/lots/${lotId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(values),
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      const message = data.error || "Failed to update lot.";
+      toast.error("Couldn't update lot", { description: message });
+      throw new Error(message);
+    }
+
+    setNotificationsRefreshKey(Date.now());
+
+    const { lot } = await res.json();
+    toast.success("Lot updated", { description: `Lot ${lot.lotNo} was saved.` });
+    const patch = {
+      lotNo: lot.lotNo,
+      ownerGivenName: lot.ownerGivenName,
+      ownerSurname: lot.ownerSurname,
+      owner: [lot.ownerSurname, lot.ownerGivenName].filter(Boolean).join(", "),
+      surveyNo: lot.surveyNo,
+      dateSurveyed: lot.dateSurveyed,
+      areaSqm: lot.areaSqm,
+      patentNo: lot.patentNo,
+      remarks: lot.remarks,
+      planPrefix: lot.planPrefix,
+      classification: lot.classification,
+    };
+    const apply = (f: LotFeature): LotFeature =>
+      String(f.id) === String(lotId)
+        ? ({ ...f, properties: { ...f.properties, ...patch } } as LotFeature)
+        : f;
+
+    setLayerData((d) => {
+      const next: typeof d = {};
+      for (const [key, feats] of Object.entries(d)) next[key] = feats.map(apply);
+      return next;
+    });
+    setSelectedFeature((f) => (f ? apply(f) : f));
+    setSheetPreview((p) => (p ? { ...p, lots: p.lots.map(apply) } : p));
+  }
+
+    // Superadmin: set one survey number on every lot of the given sheets.
+  // POST /api/lot-sheets/bulk-survey-no, then patch survey no. (and the
+  // plan prefix derived from it) onto exactly the lots the server changed.
+  // Resolves to the number of lots updated.
+  async function handleBulkSetSurveyNo(
+    sheetIds: number[],
+    surveyNo: string,
+    mode: "fill" | "overwrite"
+  ): Promise<number> {
+    const res = await fetch("/api/lot-sheets/bulk-survey-no", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sheetIds, surveyNo, mode }),
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      const message = data.error || "Failed to update survey numbers.";
+      toast.error("Couldn't update survey numbers", { description: message });
+      throw new Error(message);
+    }
+
+    setNotificationsRefreshKey(Date.now());
+
+    const data: { updatedLotIds: Array<number | string>; updatedLotCount: number } = await res.json();
+    const changed = new Set(data.updatedLotIds.map(String));
+    const planPrefix = /^[A-Za-z]+/.exec(surveyNo)?.[0].toUpperCase() ?? null;
+
+    const apply = (f: LotFeature): LotFeature =>
+      changed.has(String(f.id))
+        ? ({ ...f, properties: { ...f.properties, surveyNo, planPrefix } } as LotFeature)
+        : f;
+
+    setLayerData((d) => {
+      const next: typeof d = {};
+      for (const [key, feats] of Object.entries(d)) next[key] = feats.map(apply);
+      return next;
+    });
+    setSelectedFeature((f) => (f ? apply(f) : f));
+    setSheetPreview((p) => (p ? { ...p, lots: p.lots.map(apply) } : p));
+
+    const n = data.updatedLotCount;
+    if (n === 0) {
+      toast.info("Already up to date", {
+        description:
+          mode === "fill"
+            ? "Every lot on the selected sheet(s) already has a survey no."
+            : `All lots on the selected sheet(s) already have "${surveyNo}".`,
+      });
+    } else {
+      toast.success(`Survey no. applied to ${n} lot${n === 1 ? "" : "s"}`, {
+        description: `Set to "${surveyNo}".`,
+      });
+    }
+    return n;
   }
 
   // Fired when the user picks a result from Sidebar's search bar (see
@@ -979,15 +1167,20 @@ function MapViewerPageInner() {
   // behavior as picking several years.
   async function handleSearchSelect(result: LotSearchResult) {
     setSearchError(false);
+
+    const key = `search:${result.id}`;
+    const label = `${result.owner || "Unnamed owner"} · Lot ${result.lotNo ?? "—"}`;
+    // Same id format the effect and handleToggle use, so unchecking/removing
+    // this layer also dismisses a loading toast.
+    const toastId = `project:${key}`;
+    toast.loading("Projecting lot…", { id: toastId, description: label });
+
     try {
       const r = await fetch(`/api/map/lots?id=${result.id}`);
       if (!r.ok) throw new Error(`Request failed (${r.status})`);
       const fc: { features: LotFeature[] } = await r.json();
       const feature = fc.features[0];
       if (!feature) throw new Error("Lot not found");
-
-      const key = `search:${result.id}`;
-      const label = `${result.owner || "Unnamed owner"} · Lot ${result.lotNo ?? "—"}`;
 
       setLayerData((d) => ({ ...d, [key]: [feature] }));
       setActiveSelections((prev) => ({
@@ -996,8 +1189,17 @@ function MapViewerPageInner() {
       }));
 
       openFeature(feature);
+
+      toast.success("Successfully projected", {
+        id: toastId,
+        description: `${label} is now on the map.`,
+      });
     } catch {
       setSearchError(true);
+      toast.error("Couldn't project lot", {
+        id: toastId,
+        description: "Couldn't load that lot. Try searching again.",
+      });
     }
   }
 
@@ -1038,6 +1240,10 @@ function MapViewerPageInner() {
     }
 
     setSearchError(false);
+
+    const toastId = `project:${key}`;
+    toast.loading("Projecting lot sheet…", { id: toastId, description: log.description });
+
     try {
       // Same endpoint the generic activeSelections fetch effect below would
       // use to refetch this key later (its query is { sheet_id: entityId },
@@ -1066,8 +1272,28 @@ function MapViewerPageInner() {
       setFocusFeature({ feature: first, token: Date.now() });
       setTableVisible(true);
       if (isMobile) setMobileOpen(false);
-    } catch {
+
+      const n = features.length;
+      toast.success("Successfully projected", {
+        id: toastId,
+        description: `${n.toLocaleString()} lot${n === 1 ? "" : "s"} from ${log.description} ${
+          n === 1 ? "is" : "are"
+        } now on the map.`,
+      });
+    } catch (err) {
       setSearchError(true);
+      const noLots = err instanceof Error && err.message === "No mapped lots on this sheet";
+      if (noLots) {
+        toast.warning("Nothing to project", {
+          id: toastId,
+          description: "This lot sheet has no mapped lots yet.",
+        });
+      } else {
+        toast.error("Couldn't project lot sheet", {
+          id: toastId,
+          description: "Couldn't load that sheet. Try again.",
+        });
+      }
     }
   }
 
@@ -1099,6 +1325,19 @@ function MapViewerPageInner() {
         Object.fromEntries(Object.entries(sel.query).map(([k, v]) => [k, String(v)]))
       ).toString();
 
+      // Layers that get projection toasts:
+      //   filter:*  -> created by the Projection modal
+      //   proj:*    -> sidebar municipality / barangay checkbox
+      //   year:*    -> sidebar year checkbox
+      // Search (search:*) and notification-bell (sheet:*) picks stay quiet,
+      // because their data is already loaded before they reach this effect.
+      const isProjection =
+        key.startsWith("filter:") || key.startsWith("proj:") || key.startsWith("year:");
+      const toastId = `project:${key}`;
+      if (isProjection) {
+        toast.loading("Projecting layer…", { id: toastId, description: sel.label });
+      }
+
       fetch(`/api/map/lots?${params}`)
         .then((r) => {
           if (!r.ok) throw new Error(`Request failed (${r.status})`);
@@ -1112,10 +1351,38 @@ function MapViewerPageInner() {
             else n.delete(key);
             return n;
           });
+
+          if (isProjection) {
+            const n = fc.features.length;
+            if (n === 0) {
+              toast.warning("Nothing to project", {
+                id: toastId,
+                description: `No lots match ${sel.label}.`,
+              });
+            } else if (fc.truncated) {
+              toast.warning("Projected (partial)", {
+                id: toastId,
+                description: `Showing the first ${n.toLocaleString()} lots. Narrow your filters to see the rest.`,
+              });
+            } else {
+              toast.success("Successfully projected", {
+                id: toastId,
+                description: `${n.toLocaleString()} lot${n === 1 ? "" : "s"} from ${sel.label} ${
+                  n === 1 ? "is" : "are"
+                } now on the map.`,
+              });
+            }
+          }
         })
         .catch(() => {
           setLayerData((d) => ({ ...d, [key]: [] }));
           setErrorKeys((s) => new Set(s).add(key));
+          if (isProjection) {
+            toast.error("Couldn't project layer", {
+              id: toastId,
+              description: "Some lots failed to load. Try projecting again.",
+            });
+          }
         })
         .finally(() => {
           setLoadingKeys((s) => {
@@ -1529,6 +1796,10 @@ function MapViewerPageInner() {
                   onUpdateSurveyNo={canEditData ? handleUpdateSurveyNo : undefined}
                   onUpdateDocumentsUrl={canEditData ? handleUpdateDocumentsUrl : undefined}
                   onUpdateSurveyClass={canEditData ? handleUpdateSurveyClass : undefined}
+                  onEditSheet={isSuperAdmin || isAdmin ? handleEditSheet : undefined}
+                  onEditLot={isSuperAdmin || isAdmin ? handleEditLot : undefined}
+                  onBulkSetSurveyNo={isSuperAdmin || isAdmin ? handleBulkSetSurveyNo : undefined}
+                  canEditRecord={canEditRecord}
                 />
               </div>
             )}

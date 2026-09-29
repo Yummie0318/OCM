@@ -83,13 +83,15 @@ export default function CreateShapefileModal({ open, onClose }: Props) {
 
       {/* Dialog card is a flex column: header / scrollable body / footer.
           ExportFooter is a normal (non-fixed) flex child now, so it docks
-          to the bottom of THIS card, not the browser window. */}
+          to the bottom of THIS card, not the browser window.
+          On phones the card is nearly full-screen (inset-1) with tighter
+          padding; overflow-x-hidden on the body guarantees no sideways scroll. */}
       <div
-        className={`${uiFont.className} absolute inset-2 flex flex-col overflow-hidden rounded-2xl shadow-2xl sm:inset-5`}
+        className={`${uiFont.className} absolute inset-1 flex flex-col overflow-hidden rounded-2xl shadow-2xl sm:inset-5`}
         style={{ ...vars, background: "var(--sb-bg)" }}
       >
         <div
-          className="flex flex-shrink-0 items-center gap-3 px-5 py-3.5"
+          className="flex flex-shrink-0 items-center gap-3 px-3 py-3 sm:px-5 sm:py-3.5"
           style={{ borderBottom: `1px solid ${HAIRLINE}`, background: "var(--sb-bg-elevated)" }}
         >
           <div className="min-w-0 flex-1">
@@ -99,29 +101,30 @@ export default function CreateShapefileModal({ open, onClose }: Props) {
           <button
             type="button"
             onClick={onClose}
+            aria-label="Close"
             className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border-0 bg-transparent p-0 text-[var(--sb-text-muted)] transition-colors hover:bg-[var(--sb-hover)] hover:text-[var(--sb-text)]"
           >
             <X size={17} />
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-          <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
+        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-2.5 py-3 sm:px-5 sm:py-4">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] lg:gap-5">
             <div className="flex min-w-0 flex-col gap-4">
               <ControlPointForm value={controlPoint} onChange={setControlPoint} />
-             <LotEditor lots={lots} onChange={setLots} controlPoint={controlPoint} />
+              <LotEditor lots={lots} onChange={setLots} controlPoint={controlPoint} />
             </div>
 
             <div className="min-w-0">
               <div
-                className="sticky top-0 flex flex-col gap-2 rounded-[14px] p-4"
+                className="flex flex-col gap-2 rounded-[14px] p-3 sm:p-4 lg:sticky lg:top-0"
                 style={{ border: `1px solid ${HAIRLINE}`, background: "var(--sb-bg-elevated)" }}
               >
                 <h3 className="text-[13px] font-bold text-[var(--sb-text)]">Map preview</h3>
                 <p className="text-[11.5px] text-[var(--sb-text-faint)]">Filled = complete · Dashed = incomplete</p>
                 <ShapePreview
                   shapes={previewShapes}
-                  height={420}
+                  height={320}
                   emptyMessage="Add corners to preview"
                   onViewMap={() => setMapModalOpen(true)}
                   mapDisabled={computedLots.length === 0}

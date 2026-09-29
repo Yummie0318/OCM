@@ -9,9 +9,16 @@ import type { ControlPointRow } from "@/app/api/control-points/route";
 const FIXED_ZONE: PRS92Zone = 3;
 const HAIRLINE = "color-mix(in srgb, var(--sb-border) 70%, transparent)";
 
-export const labelCls = "flex flex-col gap-1 text-[10.5px] font-semibold text-[var(--sb-text-muted)]";
+// min-w-0 lets these shrink inside grid/flex parents instead of forcing the
+// dialog wider than the screen.
+export const labelCls = "flex min-w-0 flex-col gap-1 text-[10.5px] font-semibold text-[var(--sb-text-muted)]";
 export const inputCls =
-  "w-full rounded-[8px] border border-[var(--sb-border)] bg-[var(--sb-bg)] px-2.5 py-[7px] text-[12.5px] text-[var(--sb-text)] outline-none transition-colors focus:border-[var(--sb-accent)]";
+  "w-full min-w-0 rounded-[8px] border border-[var(--sb-border)] bg-[var(--sb-bg)] px-2.5 py-[7px] text-[12.5px] text-[var(--sb-text)] outline-none transition-colors focus:border-[var(--sb-accent)]";
+
+// Compact variant for the tight bearing / coordinate table cells.
+export const cellCls =
+  inputCls +
+  " !px-1 text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none";
 
 interface Props {
   value: ControlPoint;
@@ -90,7 +97,7 @@ export default function ControlPointForm({ value, onChange }: Props) {
 
   return (
     <section
-      className="flex flex-col gap-3 rounded-[14px] p-4"
+      className="flex min-w-0 flex-col gap-3 rounded-[14px] p-3 sm:p-4"
       style={{ border: `1px solid ${HAIRLINE}`, background: "var(--sb-bg-elevated)" }}
     >
       <SectionHeader index={1} title="Control Point" />

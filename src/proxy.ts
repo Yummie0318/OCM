@@ -1,4 +1,4 @@
-// Target path: src/middleware.ts  (project root of src/, NOT inside src/app)
+// Target path: src/proxy.ts  (project root of src/, NOT inside src/app)
 //
 // Runs before every matched request. Anything not in PUBLIC_PATHS requires
 // a valid session cookie -- if it's missing or invalid, the visitor is
@@ -8,15 +8,17 @@
 //   const next = new URLSearchParams(window.location.search).get("next");
 //   router.push(next || "/map");
 //
-// Runs on the Edge runtime, which is why auth.ts uses `jose` instead of a
-// Node-only JWT library -- bcryptjs (used for password hashing) is only
-// ever imported by the login/register route handlers, never by this file.
+// (Formerly middleware.ts. Next.js renamed the "middleware" convention to
+// "proxy". It now runs on the Node.js runtime instead of Edge. `jose` still
+// works fine here, so auth.ts doesn't need to change. bcryptjs (used for
+// password hashing) is still only imported by the login/register route
+// handlers, never by this file.)
 //
 // BACK-BUTTON AFTER LOGOUT FIX: every response for a protected page/route
 // now carries Cache-Control: no-store. Without it, the browser keeps the
 // page in its cache / back-forward cache, so pressing Back after logging
 // out restores the old /map screen from memory without ever contacting the
-// server -- meaning this middleware never runs and can't redirect. With
+// server -- meaning this proxy never runs and can't redirect. With
 // no-store, the browser must re-request the page on Back, the cookie is
 // gone, and the visitor is sent to the login page.
 
@@ -34,7 +36,7 @@ function withNoStore(response: NextResponse): NextResponse {
   return response;
 }
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const isPublic = PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 

@@ -73,6 +73,7 @@ export function SidebarThemeProvider({
     if (!hydrated) return;
     try {
       window.localStorage.setItem(DARK_MODE_STORAGE_KEY, darkMode ? "1" : "0");
+      window.dispatchEvent(new Event("ocm-theme-change"));
     } catch {
       // ignore
     }
@@ -85,6 +86,7 @@ export function SidebarThemeProvider({
     try {
       if (accentColor) window.localStorage.setItem(ACCENT_STORAGE_KEY, accentColor);
       else window.localStorage.removeItem(ACCENT_STORAGE_KEY);
+      window.dispatchEvent(new Event("ocm-theme-change"));
     } catch {
       // ignore
     }

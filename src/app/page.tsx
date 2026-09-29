@@ -1,10 +1,23 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { Eye, EyeOff, Lock, User, LoaderCircle } from "lucide-react";
+import { Eye, EyeOff, Lock, User, LoaderCircle, Clock } from "lucide-react";
 import { uiFont } from "@/components/map/sidebarTheme";
 import { SidebarThemeProvider, useSidebarTheme } from "@/components/map/SidebarThemeContext";
+
+// Update this number whenever you commit a new version.
+const APP_VERSION = "0.40";
+
+// Remembers the lock across page refreshes (UI only; the server enforces it).
+const LOCK_STORAGE_KEY = "ocm_login_lock_until";
+
+// 875 -> "14:35"
+function formatCountdown(total: number): string {
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
 
 export default function LoginPageWrapper() {
   // Provider needs to live above the component that calls useSidebarTheme(),
@@ -25,8 +38,51 @@ function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  // Rate-limit lockout: the moment (ms) sign-in unlocks, and a live countdown.
+  // The server is what really blocks attempts; this is only the friendly UI.
+  const [lockedUntil, setLockedUntil] = useState<number | null>(null);
+  const [secondsLeft, setSecondsLeft] = useState(0);
+  const locked = lockedUntil !== null;
+
+  function startLock(seconds: number) {
+    const until = Date.now() + seconds * 1000;
+    setSecondsLeft(seconds);
+    setLockedUntil(until);
+    try {
+      localStorage.setItem(LOCK_STORAGE_KEY, String(until));
+    } catch {}
+  }
+
+  // Restore a lock that was active before a refresh / reopened tab.
+  useEffect(() => {
+    try {
+      const saved = Number(localStorage.getItem(LOCK_STORAGE_KEY));
+      if (saved > Date.now()) setLockedUntil(saved);
+      else localStorage.removeItem(LOCK_STORAGE_KEY);
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    if (lockedUntil === null) return;
+    const tick = () => {
+      const left = Math.max(0, Math.ceil((lockedUntil - Date.now()) / 1000));
+      setSecondsLeft(left);
+      if (left === 0) {
+        setLockedUntil(null);
+        setError(null);
+        try {
+          localStorage.removeItem(LOCK_STORAGE_KEY);
+        } catch {}
+      }
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [lockedUntil]);
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    if (locked) return;
     setError(null);
 
     if (!identifier.trim() || !password) {
@@ -44,13 +100,20 @@ function LoginPage() {
       const data = await res.json();
 
       if (!res.ok) {
+        if (res.status === 429) {
+          const seconds = Number(data.retryAfter ?? res.headers.get("Retry-After")) || 900;
+          startLock(seconds);
+          setPassword("");
+          setSubmitting(false);
+          return;
+        }
         setError(data.error ?? "Something went wrong. Please try again.");
         setSubmitting(false);
         return;
       }
 
-        router.push(data.mustChangePassword ? "/change-password" : "/map");
-        router.refresh();
+      router.push(data.mustChangePassword ? "/change-password" : "/map");
+      router.refresh();
     } catch {
       setError("Couldn't reach the server. Check your connection and try again.");
       setSubmitting(false);
@@ -101,6 +164,23 @@ function LoginPage() {
             </div>
           )}
 
+          {locked && (
+            <div
+              role="alert"
+              className="flex items-start gap-2.5 rounded-[10px] border px-3 py-2.5 text-[12.5px]"
+              style={{
+                background: "rgba(245, 158, 11, 0.1)",
+                borderColor: "rgba(245, 158, 11, 0.4)",
+                color: "var(--sb-text)",
+              }}
+            >
+              <Clock size={15} className="mt-0.5 flex-shrink-0 text-amber-500" />
+              <span>
+                Too many failed attempts, so sign-in is paused for your security.
+              </span>
+            </div>
+          )}
+
           <label className="flex flex-col gap-1.5">
             <span className="text-[12px] font-semibold text-[var(--sb-text)]">Username or email</span>
             <div className="flex items-center gap-2 rounded-[10px] border border-[var(--sb-border)] px-3 py-3 transition-all focus-within:border-[var(--sb-accent)] focus-within:ring-4 focus-within:ring-[var(--sb-accent)]/10 sm:py-2.5">
@@ -109,9 +189,10 @@ function LoginPage() {
                 type="text"
                 autoComplete="username"
                 value={identifier}
+                disabled={locked}
                 onChange={(e) => setIdentifier(e.target.value)}
                 placeholder="username"
-                className="w-full border-0 bg-transparent p-0 text-[15px] text-[var(--sb-text)] outline-none placeholder:text-[var(--sb-text-faint)] sm:text-[13.5px]"
+                className="w-full border-0 bg-transparent p-0 text-[15px] text-[var(--sb-text)] outline-none placeholder:text-[var(--sb-text-faint)] disabled:opacity-60 sm:text-[13.5px]"
               />
             </div>
           </label>
@@ -124,9 +205,10 @@ function LoginPage() {
                 type={showPassword ? "text" : "password"}
                 autoComplete="current-password"
                 value={password}
+                disabled={locked}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
-                className="w-full border-0 bg-transparent p-0 text-[15px] text-[var(--sb-text)] outline-none placeholder:text-[var(--sb-text-faint)] sm:text-[13.5px]"
+                className="w-full border-0 bg-transparent p-0 text-[15px] text-[var(--sb-text)] outline-none placeholder:text-[var(--sb-text-faint)] disabled:opacity-60 sm:text-[13.5px]"
               />
               <button
                 type="button"
@@ -142,12 +224,12 @@ function LoginPage() {
 
           <button
             type="submit"
-            disabled={submitting}
+            disabled={submitting || locked}
             className="mt-2 flex min-h-[46px] items-center justify-center gap-2 rounded-full border-0 py-2.5 text-[14px] font-semibold shadow-sm transition-all hover:opacity-90 active:scale-[0.98] disabled:opacity-60 disabled:active:scale-100 sm:text-[13.5px]"
             style={{ background: theme.accent, color: theme.onAccent }}
           >
             {submitting && <LoaderCircle size={14} className="animate-spin" />}
-            {submitting ? "Signing in…" : "Sign in"}
+            {locked ? `Try again in ${formatCountdown(secondsLeft)}` : submitting ? "Signing in…" : "Sign in"}
           </button>
         </form>
 
@@ -163,6 +245,9 @@ function LoginPage() {
             Arnold Mendoza
           </a>
           , the administrator.
+        </p>
+        <p className="mt-3 text-center text-[10.5px] font-medium tracking-wide text-[var(--sb-text-faint)]">
+          Version {APP_VERSION}
         </p>
       </div>
 

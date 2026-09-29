@@ -163,6 +163,7 @@ import {
 import type { TreeNodeData, SelectionMeta } from "@/lib/geo";
 import { useSidebarTheme } from "./SidebarThemeContext";
 import { uiFont } from "./sidebarTheme";
+import { toast } from "@/components/notifications/Toaster";
 
 // FacetKey: the six underlying, independently-fetched/filtered facets.
 // Unchanged in count/shape from before this pass -- only how they're
@@ -530,7 +531,19 @@ export default function ProjectionModal({
       }
     }
     params.set("label", label);
-    window.open(`/reports/lots?${params.toString()}`, "_blank", "noopener,noreferrer");
+
+    // NOTE: "noopener" in the features string makes window.open() ALWAYS
+    // return null, so a blocked popup can't be told apart from success.
+    // Open normally, then sever the opener manually.
+    const win = window.open(`/reports/lots?${params.toString()}`, "_blank");
+    if (win) {
+      win.opener = null;
+      toast.success("Report opened", { description: `Generating report for ${label} in a new tab.` });
+    } else {
+      toast.error("Couldn't open report", {
+        description: "Your browser blocked the new tab. Allow pop-ups for this site and try again.",
+      });
+    }
   }
 
   const activeTabDef = TABS.find((t) => t.id === activeTab)!;

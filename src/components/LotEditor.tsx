@@ -5,7 +5,7 @@ import { Plus, Trash2, ImageUp, Loader2 } from "lucide-react";
 import type { Lot, Corner, ControlPoint } from "@/types";
 import { localRing } from "@/lib/computeLots";
 import ShapePreview from "@/components/ShapePreview";
-import { labelCls, inputCls, SectionHeader } from "@/components/ControlPointForm";
+import { labelCls, inputCls, cellCls, SectionHeader } from "@/components/ControlPointForm";
 
 const HAIRLINE = "color-mix(in srgb, var(--sb-border) 70%, transparent)";
 
@@ -382,7 +382,7 @@ export default function LotEditor({ lots, onChange, controlPoint }: Props) {
 
   return (
     <section
-      className="flex flex-col gap-3 rounded-[14px] p-4"
+      className="flex min-w-0 flex-col gap-3 rounded-[14px] p-3 sm:p-4"
       style={{ border: `1px solid ${HAIRLINE}`, background: "var(--sb-bg-elevated)" }}
     >
       <SectionHeader index={2} title="Lot Data" />
@@ -395,7 +395,7 @@ export default function LotEditor({ lots, onChange, controlPoint }: Props) {
         onChange={handleImageSelected}
       />
 
-      <div className="flex flex-col gap-3">
+      <div className="flex min-w-0 flex-col gap-3">
         {lots.map((lot, lotIdx) => {
           const mode: InputMode = modes[lot.id] ?? "coords";
           const bd = bearingData[lot.id];
@@ -406,7 +406,7 @@ export default function LotEditor({ lots, onChange, controlPoint }: Props) {
               key={lot.id}
               onMouseEnter={() => { importTargetLotId.current = lot.id; }}
               onFocusCapture={() => { importTargetLotId.current = lot.id; }}
-              className="flex flex-col gap-3 rounded-[12px] p-3"
+              className="flex min-w-0 flex-col gap-3 rounded-[12px] p-2.5 sm:p-3"
               style={{ border: `1px solid ${HAIRLINE}`, background: "var(--sb-bg)" }}
             >
               <div className="flex items-center justify-between">
@@ -423,7 +423,7 @@ export default function LotEditor({ lots, onChange, controlPoint }: Props) {
               </div>
 
               <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_220px]">
-                <div className="flex flex-col gap-2.5">
+                <div className="flex min-w-0 flex-col gap-2.5">
                   <div className="grid grid-cols-2 gap-2.5">
                     <label className={labelCls}>
                       Lot No.
@@ -489,7 +489,7 @@ export default function LotEditor({ lots, onChange, controlPoint }: Props) {
                   </div>
                 </div>
 
-                <div className="flex flex-col gap-1.5">
+                <div className="flex min-w-0 flex-col gap-1.5">
                   <span className="text-[10.5px] font-semibold text-[var(--sb-text-muted)]">Preview</span>
                   <div className="overflow-hidden rounded-[10px]" style={{ border: `1px solid ${HAIRLINE}` }}>
                     <ShapePreview
@@ -501,7 +501,7 @@ export default function LotEditor({ lots, onChange, controlPoint }: Props) {
                 </div>
               </div>
 
-              <div className="flex items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <div
                   className="flex overflow-hidden rounded-full"
                   style={{ border: `1px solid ${HAIRLINE}` }}
@@ -555,7 +555,7 @@ export default function LotEditor({ lots, onChange, controlPoint }: Props) {
 
               {mode === "coords" ? (
                 <>
-                  <div className="grid grid-cols-[46px_1fr_1fr_24px] items-center gap-1.5">
+                  <div className="grid grid-cols-[40px_minmax(0,1fr)_minmax(0,1fr)_20px] items-center gap-1.5">
                     <span className="text-[9.5px] font-bold uppercase tracking-wide text-[var(--sb-text-faint)]">Sta</span>
                     <span className="text-[9.5px] font-bold uppercase tracking-wide text-[var(--sb-text-faint)]">Northing</span>
                     <span className="text-[9.5px] font-bold uppercase tracking-wide text-[var(--sb-text-faint)]">Easting</span>
@@ -564,7 +564,7 @@ export default function LotEditor({ lots, onChange, controlPoint }: Props) {
                     {lot.corners.map((corner) => (
                       <Fragment key={corner.id}>
                         <input
-                          className={`${inputCls} text-center`}
+                          className={cellCls}
                           type="text"
                           value={corner.station}
                           maxLength={2}
@@ -600,22 +600,22 @@ export default function LotEditor({ lots, onChange, controlPoint }: Props) {
               ) : (
                 <>
                   {/* Tie line: control point -> station 1 */}
-                  <div className="flex flex-col gap-1.5">
+                  <div className="flex min-w-0 flex-col gap-1.5">
                     <span className="text-[10.5px] font-semibold text-[var(--sb-text-muted)]">
                       Tie line (control point to corner 1)
                     </span>
-                    <div className="grid grid-cols-[50px_1fr_1fr_50px_1.3fr] items-center gap-1.5">
-                      <select className={inputCls} value={bd?.tie.ns ?? "N"} onChange={(e) => updateTie(lot, { ns: e.target.value as "N" | "S" })}>
+                    <div className="grid grid-cols-[44px_minmax(0,1fr)_minmax(0,1fr)_44px_minmax(0,1.3fr)] items-center gap-1 sm:gap-1.5">
+                      <select className={cellCls} value={bd?.tie.ns ?? "N"} onChange={(e) => updateTie(lot, { ns: e.target.value as "N" | "S" })}>
                         <option value="N">N</option>
                         <option value="S">S</option>
                       </select>
-                      <input className={inputCls} type="number" step="any" min={0} max={90} placeholder="Deg" value={bd?.tie.deg ?? ""} onChange={(e) => updateTie(lot, { deg: e.target.value })} />
-                      <input className={inputCls} type="number" step="any" min={0} max={59} placeholder="Min" value={bd?.tie.min ?? ""} onChange={(e) => updateTie(lot, { min: e.target.value })} />
-                      <select className={inputCls} value={bd?.tie.ew ?? "E"} onChange={(e) => updateTie(lot, { ew: e.target.value as "E" | "W" })}>
+                      <input className={cellCls} type="number" step="any" min={0} max={90} placeholder="Deg" value={bd?.tie.deg ?? ""} onChange={(e) => updateTie(lot, { deg: e.target.value })} />
+                      <input className={cellCls} type="number" step="any" min={0} max={59} placeholder="Min" value={bd?.tie.min ?? ""} onChange={(e) => updateTie(lot, { min: e.target.value })} />
+                      <select className={cellCls} value={bd?.tie.ew ?? "E"} onChange={(e) => updateTie(lot, { ew: e.target.value as "E" | "W" })}>
                         <option value="E">E</option>
                         <option value="W">W</option>
                       </select>
-                      <input className={inputCls} type="number" step="any" min={0} placeholder="Distance" value={bd?.tie.dist ?? ""} onChange={(e) => updateTie(lot, { dist: e.target.value })} />
+                      <input className={cellCls} type="number" step="any" min={0} placeholder="Distance" value={bd?.tie.dist ?? ""} onChange={(e) => updateTie(lot, { dist: e.target.value })} />
                     </div>
                     {(() => {
                       // Only warn when a control point IS selected but its values are unusable.
@@ -644,51 +644,55 @@ export default function LotEditor({ lots, onChange, controlPoint }: Props) {
                     })()}
                   </div>
 
-                  <div className="grid grid-cols-[34px_50px_1fr_1fr_50px_1.3fr_24px] items-center gap-1.5">
-                    <span className="text-[9.5px] font-bold uppercase tracking-wide text-[var(--sb-text-faint)]">Line</span>
-                    <span className="text-[9.5px] font-bold uppercase tracking-wide text-[var(--sb-text-faint)]">NS</span>
-                    <span className="text-[9.5px] font-bold uppercase tracking-wide text-[var(--sb-text-faint)]">Deg</span>
-                    <span className="text-[9.5px] font-bold uppercase tracking-wide text-[var(--sb-text-faint)]">Min</span>
-                    <span className="text-[9.5px] font-bold uppercase tracking-wide text-[var(--sb-text-faint)]">EW</span>
-                    <span className="text-[9.5px] font-bold uppercase tracking-wide text-[var(--sb-text-faint)]">Distance</span>
-                    <span />
+                  {/* overflow-x-auto is only a fallback for very narrow phones:
+                      if the table can't fit, just this table scrolls, never the dialog. */}
+                  <div className="overflow-x-auto">
+                    <div className="grid min-w-[280px] grid-cols-[30px_44px_minmax(0,1fr)_minmax(0,1fr)_44px_minmax(0,1.3fr)_20px] items-center gap-1 sm:gap-1.5">
+                      <span className="text-[9.5px] font-bold uppercase tracking-wide text-[var(--sb-text-faint)]">Line</span>
+                      <span className="text-[9.5px] font-bold uppercase tracking-wide text-[var(--sb-text-faint)]">NS</span>
+                      <span className="text-[9.5px] font-bold uppercase tracking-wide text-[var(--sb-text-faint)]">Deg</span>
+                      <span className="text-[9.5px] font-bold uppercase tracking-wide text-[var(--sb-text-faint)]">Min</span>
+                      <span className="text-[9.5px] font-bold uppercase tracking-wide text-[var(--sb-text-faint)]">EW</span>
+                      <span className="text-[9.5px] font-bold uppercase tracking-wide text-[var(--sb-text-faint)]">Distance</span>
+                      <span />
 
-                    {(bd?.lines ?? []).map((line, i, arr) => {
-                      const to = i === arr.length - 1 ? 1 : i + 2;
-                      return (
-                        <Fragment key={line.id}>
-                          <span className="text-center text-[10.5px] font-semibold text-[var(--sb-text-muted)]">
-                            {i + 1}-{to}
-                          </span>
-                          <select className={inputCls} value={line.ns} onChange={(e) => updateBearingLine(lot, line.id, { ns: e.target.value as "N" | "S" })}>
-                            <option value="N">N</option>
-                            <option value="S">S</option>
-                          </select>
-                          <input className={inputCls} type="number" step="any" min={0} max={90} value={line.deg} onChange={(e) => updateBearingLine(lot, line.id, { deg: e.target.value })} />
-                          <input className={inputCls} type="number" step="any" min={0} max={59} value={line.min} onChange={(e) => updateBearingLine(lot, line.id, { min: e.target.value })} />
-                          <select className={inputCls} value={line.ew} onChange={(e) => updateBearingLine(lot, line.id, { ew: e.target.value as "E" | "W" })}>
-                            <option value="E">E</option>
-                            <option value="W">W</option>
-                          </select>
-                          <input className={inputCls} type="number" step="any" min={0} value={line.dist} onChange={(e) => updateBearingLine(lot, line.id, { dist: e.target.value })} />
-                          <div className="flex items-center justify-center">
-                            {arr.length > 3 && (
-                              <button
-                                type="button"
-                                tabIndex={-1}
-                                onClick={() => removeBearingLine(lot, line.id)}
-                                className="flex h-5 w-5 items-center justify-center rounded-[6px] border-0 bg-transparent p-0 text-red-500 transition-colors hover:bg-red-500/10"
-                              >
-                                <Trash2 size={11} />
-                              </button>
-                            )}
-                          </div>
-                        </Fragment>
-                      );
-                    })}
+                      {(bd?.lines ?? []).map((line, i, arr) => {
+                        const to = i === arr.length - 1 ? 1 : i + 2;
+                        return (
+                          <Fragment key={line.id}>
+                            <span className="text-center text-[10.5px] font-semibold text-[var(--sb-text-muted)]">
+                              {i + 1}-{to}
+                            </span>
+                            <select className={cellCls} value={line.ns} onChange={(e) => updateBearingLine(lot, line.id, { ns: e.target.value as "N" | "S" })}>
+                              <option value="N">N</option>
+                              <option value="S">S</option>
+                            </select>
+                            <input className={cellCls} type="number" step="any" min={0} max={90} value={line.deg} onChange={(e) => updateBearingLine(lot, line.id, { deg: e.target.value })} />
+                            <input className={cellCls} type="number" step="any" min={0} max={59} value={line.min} onChange={(e) => updateBearingLine(lot, line.id, { min: e.target.value })} />
+                            <select className={cellCls} value={line.ew} onChange={(e) => updateBearingLine(lot, line.id, { ew: e.target.value as "E" | "W" })}>
+                              <option value="E">E</option>
+                              <option value="W">W</option>
+                            </select>
+                            <input className={cellCls} type="number" step="any" min={0} value={line.dist} onChange={(e) => updateBearingLine(lot, line.id, { dist: e.target.value })} />
+                            <div className="flex items-center justify-center">
+                              {arr.length > 3 && (
+                                <button
+                                  type="button"
+                                  tabIndex={-1}
+                                  onClick={() => removeBearingLine(lot, line.id)}
+                                  className="flex h-5 w-5 items-center justify-center rounded-[6px] border-0 bg-transparent p-0 text-red-500 transition-colors hover:bg-red-500/10"
+                                >
+                                  <Trash2 size={11} />
+                                </button>
+                              )}
+                            </div>
+                          </Fragment>
+                        );
+                      })}
+                    </div>
                   </div>
 
-                  <div className="flex items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <button
                       type="button"
                       onClick={() => addBearingLine(lot)}

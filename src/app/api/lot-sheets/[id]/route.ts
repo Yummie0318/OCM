@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { getPool } from "@/lib/db";
 import { isTraceableGoogleDriveLink, PLAN_LINK_HELP_MESSAGE } from "@/lib/planLink";
+import { requireEditor, canEditRecord } from "@/lib/requireEditor";
+import { logActivity } from "@/lib/activityLog";
 
 // Mirrors the DB CHECK constraint on lot_sheets.survey_class
 // (CHECK (survey_class IN ('admin', 'private'))). Kept here so the API
@@ -229,5 +231,121 @@ export async function PATCH(
     );
   } finally {
     client.release();
+  }
+  
+}
+// PUT /api/lot-sheets/[id]  (superadmin only)
+// Full edit of the sheet's own fields. Unlike PATCH (which only fills in
+// missing values), this can overwrite AND clear values.
+// Body: { sheetNo, planUrl, documentsUrl, surveyClass }
+//   sheetNo: required, non-blank
+//   planUrl / documentsUrl: blank clears it, otherwise must be a traceable Drive link
+//   surveyClass: "" clears it, otherwise "admin" | "private"
+export async function PUT(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const auth = await requireEditor();
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
+
+  const { id } = await params;
+  const sheetId = Number(id);
+  if (!Number.isInteger(sheetId) || sheetId <= 0) {
+    return NextResponse.json({ error: "Invalid sheet id." }, { status: 400 });
+  }
+
+  const body = await request.json().catch(() => ({}));
+  const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+
+  const sheetNo = str(body.sheetNo);
+  const planUrl = str(body.planUrl) || null;
+  const documentsUrl = str(body.documentsUrl) || null;
+  const surveyClassRaw = str(body.surveyClass).toLowerCase();
+  const surveyClass = surveyClassRaw || null;
+
+  if (!sheetNo) {
+    return NextResponse.json({ error: "Sheet No. is required." }, { status: 400 });
+  }
+  if (planUrl && !isTraceableGoogleDriveLink(planUrl)) {
+    return NextResponse.json({ error: PLAN_LINK_HELP_MESSAGE }, { status: 400 });
+  }
+  if (documentsUrl && !isTraceableGoogleDriveLink(documentsUrl)) {
+    return NextResponse.json({ error: PLAN_LINK_HELP_MESSAGE }, { status: 400 });
+  }
+  if (surveyClass && !isSurveyClass(surveyClass)) {
+    return NextResponse.json(
+      { error: `Survey class must be one of: ${SURVEY_CLASSES.join(", ")}.` },
+      { status: 400 }
+    );
+  }
+
+  try {
+    const pool = getPool();
+
+    // Read the old values first so we can log exactly what changed.
+    const beforeResult = await pool.query(
+      `SELECT sheet_no, plan_url, documents_url, survey_class, created_by FROM lot_sheets WHERE id = $1`,
+      [sheetId]
+    );
+    if (beforeResult.rows.length === 0) {
+      return NextResponse.json({ error: "Sheet not found." }, { status: 404 });
+    }
+    const old = beforeResult.rows[0];
+
+    if (!canEditRecord(auth, old.created_by)) {
+      return NextResponse.json(
+        { error: "You can only edit lot sheets you encoded." },
+        { status: 403 }
+      );
+    }
+
+    const { rows } = await pool.query(
+      `UPDATE lot_sheets
+       SET sheet_no = $1, plan_url = $2, documents_url = $3, survey_class = $4
+       WHERE id = $5
+       RETURNING sheet_no, plan_url, documents_url, survey_class`,
+      [sheetNo, planUrl, documentsUrl, surveyClass, sheetId]
+    );
+    if (rows.length === 0) {
+      return NextResponse.json({ error: "Sheet not found." }, { status: 404 });
+    }
+    const r = rows[0];
+
+    // Log only the fields that actually changed; skip the log if nothing did.
+    const fields: [string, string][] = [
+      ["sheetNo", "sheet_no"],
+      ["planUrl", "plan_url"],
+      ["documentsUrl", "documents_url"],
+      ["surveyClass", "survey_class"],
+    ];
+    const beforeChanges: Record<string, unknown> = {};
+    const afterChanges: Record<string, unknown> = {};
+    for (const [label, col] of fields) {
+      if ((old[col] ?? null) !== (r[col] ?? null)) {
+        beforeChanges[label] = old[col] ?? null;
+        afterChanges[label] = r[col] ?? null;
+      }
+    }
+    if (Object.keys(afterChanges).length > 0) {
+      await logActivity({
+        userId: auth.userId,
+        action: "update",
+        entityType: "lot_sheet",
+        entityId: sheetId,
+        description: `${auth.username} edited lot sheet #${r.sheet_no} (${Object.keys(afterChanges).join(", ")})`,
+        changes: { before: beforeChanges, after: afterChanges },
+      });
+    }
+
+    return NextResponse.json({
+      ok: true,
+      sheetNo: r.sheet_no,
+      planUrl: r.plan_url,
+      documentsUrl: r.documents_url,
+      surveyClass: r.survey_class,
+    });
+  } catch (err) {
+    console.error("PUT /api/lot-sheets/[id] failed:", err);
+    return NextResponse.json({ error: "Failed to update sheet." }, { status: 500 });
   }
 }

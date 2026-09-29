@@ -39,6 +39,12 @@ export async function POST(request: Request) {
       { status: 400 }
     );
   }
+  if (newPassword.length > 72) {
+    return NextResponse.json(
+      { error: "New password must be 72 characters or fewer." },
+      { status: 400 }
+    );
+  }
 
   const pool = getPool();
   const { rows } = await pool.query("SELECT password FROM users WHERE id = $1", [user.id]);

@@ -7,6 +7,7 @@ import { isTraceableGoogleDriveLink, PLAN_LINK_HELP_MESSAGE } from "@/lib/planLi
 import SummaryBar from "@/components/map/SummaryBar";
 import { useSidebarTheme } from "@/components/map/SidebarThemeContext";
 import { uiFont } from "@/components/map/sidebarTheme";
+import { toast } from "@/components/notifications/Toaster";
 import {
   Table2,
   X,
@@ -19,7 +20,8 @@ import {
   Link2,
   Loader2,
   Plus,
-} from "lucide-react";
+  Pencil,
+} from "lucide-react";  
 
 const COLOR_PRESETS: { label: string; value: string }[] = [
   { label: "Titled", value: "#22c55e" },
@@ -31,6 +33,12 @@ const COLOR_PRESETS: { label: string; value: string }[] = [
 
 const HAIRLINE = "color-mix(in srgb, var(--sb-border) 70%, transparent)";
 const HAIRLINE_SOFT = "color-mix(in srgb, var(--sb-border) 45%, transparent)";
+
+// Same input/button styling as the Add user form in UsersModal.tsx
+const btnBase = "border-0 p-0 transition-colors duration-100 disabled:cursor-not-allowed disabled:opacity-40";
+
+const inputCls =
+  "w-full min-w-0 rounded-[10px] border border-[var(--sb-border)] bg-[var(--sb-bg)] px-3 py-2 text-[13px] text-[var(--sb-text)] outline-none transition-all placeholder:text-[var(--sb-text-faint)] focus:border-[var(--sb-accent)] focus:ring-4 focus:ring-[var(--sb-accent)]/10 disabled:opacity-60";
 
 // Coerces sheetId to a real number regardless of whether the API returned
 // it as a JS number or a numeric string (e.g. some Postgres drivers/column
@@ -134,7 +142,19 @@ interface Props {
   onUpdatePlanUrl?: (sheetId: number, planUrl: string) => Promise<void>;
   onUpdateSurveyNo?: (sheetId: number, surveyNo: string) => Promise<void>;
   onUpdateDocumentsUrl?: (sheetId: number, documentsUrl: string) => Promise<void>;
-  onUpdateSurveyClass?: (sheetId: number, surveyClass: "admin" | "private") => Promise<void>;
+   onUpdateSurveyClass?: (sheetId: number, surveyClass: "admin" | "private") => Promise<void>;
+  // Superadmin-only. When provided, an Edit button shows in the Actions column.
+  onEditSheet?: (sheetId: number, values: SheetEditValues) => Promise<void>;
+  onEditLot?: (lotId: string | number, values: LotEditValues) => Promise<void>;
+  // Decides per record whether the Edit button shows, based on who encoded it.
+  // If omitted, every record is editable (when the edit handlers exist).
+  canEditRecord?: (encodedBy: string | null | undefined) => boolean;
+  // Superadmin-only. Resolves to the number of lots updated.
+  onBulkSetSurveyNo?: (
+    sheetIds: number[],
+    surveyNo: string,
+    mode: "fill" | "overwrite"
+  ) => Promise<number>;
 }
 
 interface SheetGroup {
@@ -429,6 +449,405 @@ function InlineFieldControl({
   );
 }
 
+export interface SheetEditValues {
+  sheetNo: string;
+  planUrl: string;
+  documentsUrl: string;
+  surveyClass: string;
+}
+
+export interface LotEditValues {
+  lotNo: string;
+  ownerGivenName: string;
+  ownerSurname: string;
+  dateSurveyed: string;
+  areaSqm: string;
+  patentNo: string;
+  remarks: string;
+}
+
+interface EditField {
+  name: string;
+  label: string;
+  kind: "text" | "url" | "date" | "number" | "select" | "textarea";
+  options?: SelectOption[];
+  required?: boolean;
+  placeholder?: string;
+  half?: boolean;
+}
+
+const SHEET_EDIT_FIELDS: EditField[] = [
+  { name: "sheetNo", label: "Sheet No.", kind: "text", required: true },
+  {
+    name: "surveyNo",
+    label: "Survey No. (applies to all lots on this sheet)",
+    kind: "text",
+    placeholder: "Changing this updates every lot on the sheet",
+  },
+  {
+    name: "surveyClass",
+    label: "Survey class",
+    kind: "select",
+    options: [
+      { value: "", label: "— None —" },
+      { value: "admin", label: "Admin" },
+      { value: "private", label: "Private" },
+    ],
+  },
+  { name: "planUrl", label: "Plan link", kind: "url", placeholder: "Google Drive link (blank to remove)" },
+  { name: "documentsUrl", label: "Documents link", kind: "url", placeholder: "Google Drive link (blank to remove)" },
+];
+
+const LOT_EDIT_FIELDS: EditField[] = [
+  { name: "lotNo", label: "Lot No.", kind: "text", required: true, half: true },
+  { name: "patentNo", label: "Patent No.", kind: "text", half: true },
+  { name: "ownerGivenName", label: "Owner given name", kind: "text", half: true },
+  { name: "ownerSurname", label: "Owner surname", kind: "text", half: true },
+  { name: "dateSurveyed", label: "Date surveyed", kind: "date", half: true },
+  { name: "areaSqm", label: "Area (sq.m.)", kind: "number", half: true },
+  { name: "remarks", label: "Remarks", kind: "textarea" },
+];
+
+// The date column can arrive as "2024-03-05T00:00:00.000Z". The table
+// displays it in UTC (see formatDate), so slicing the UTC ISO string gives
+// exactly the date the user sees in the row.
+function toDateInputValue(value: unknown): string {
+  if (!value) return "";
+  const d = new Date(String(value));
+  return isNaN(d.getTime()) ? "" : d.toISOString().slice(0, 10);
+}
+
+function EditModal({
+  title,
+  subtitle,
+  fields,
+  initial,
+  validate,
+  onSave,
+  onClose,
+}: {
+  title: string;
+  subtitle?: string;
+  fields: EditField[];
+  initial: Record<string, string>;
+  validate?: (values: Record<string, string>) => string | null;
+  onSave: (values: Record<string, string>, baseline: Record<string, string>) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [values, setValues] = useState<Record<string, string>>(initial);
+  // Snapshot of what the record looked like when the modal opened, so we
+  // can tell "nothing changed" apart from a real edit.
+  const baseline = useRef<Record<string, string>>(initial);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  function setField(name: string, v: string) {
+    setValues((prev) => ({ ...prev, [name]: v }));
+    if (error) setError(null);
+    if (notice) setNotice(null);
+  }
+
+  async function handleSave() {
+    for (const f of fields) {
+      if (f.required && !values[f.name]?.trim()) {
+        setError(`${f.label} is required.`);
+        return;
+      }
+    }
+    const validationError = validate?.(values);
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+    const changed = fields.some(
+      (f) => (values[f.name] ?? "").trim() !== (baseline.current[f.name] ?? "").trim()
+    );
+    if (!changed) {
+      setNotice("No changes to save. This record is already up to date.");
+      toast.info("No changes to save", { description: "This record is already up to date." });
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await onSave(values, baseline.current);
+      // Modal stays open. Remember what was just saved so a second Save
+      // only counts edits made after this one.
+      baseline.current = { ...values };
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't save.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-3"
+      onClick={() => !saving && onClose()}
+    >
+      <div
+        className="flex max-h-full w-full max-w-[460px] flex-col overflow-hidden rounded-[18px] text-[var(--sb-text)]"
+        style={{
+          background: "var(--sb-bg-elevated)",
+          boxShadow: "var(--sb-shadow)",
+          border: `1px solid ${HAIRLINE}`,
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex flex-shrink-0 items-center gap-3 px-4 py-3.5" style={{ borderBottom: `1px solid ${HAIRLINE}` }}>
+          <div className="min-w-0 flex-1">
+            <h2 className="truncate text-[15px] font-bold tracking-tight">{title}</h2>
+            {subtitle && <p className="truncate text-[11.5px] text-[var(--sb-text-faint)]">{subtitle}</p>}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={saving}
+            aria-label="Close"
+            className={`${btnBase} flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-[8px] bg-transparent text-[var(--sb-text-muted)] hover:bg-[var(--sb-hover)] hover:text-[var(--sb-text)]`}
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto px-4 py-4">
+          {error && (
+            <div
+              role="alert"
+              className="rounded-[10px] border px-3 py-2 text-[12.5px] font-medium"
+              style={{ background: "rgba(239, 68, 68, 0.1)", borderColor: "rgba(239, 68, 68, 0.35)", color: "#ef4444" }}
+            >
+              {error}
+            </div>
+          )}
+          {notice && !error && (
+            <div
+              className="rounded-[10px] border px-3 py-2 text-[12.5px] font-medium"
+              style={{ background: "var(--sb-accent-bg)", borderColor: "var(--sb-border)", color: "var(--sb-accent-text)" }}
+            >
+              {notice}
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-x-3 gap-y-3.5">
+            {fields.map((f) => (
+              <label key={f.name} className={`flex min-w-0 flex-col gap-1 ${f.half ? "col-span-1" : "col-span-2"}`}>
+                <span className="text-[11.5px] font-semibold text-[var(--sb-text-muted)]">
+                  {f.label}
+                  {f.required && <span className="text-red-500"> *</span>}
+                </span>
+                {f.kind === "select" ? (
+                  <select
+                    value={values[f.name] ?? ""}
+                    disabled={saving}
+                    onChange={(e) => setField(f.name, e.target.value)}
+                    className={inputCls}
+                  >
+                    {f.options?.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                ) : f.kind === "textarea" ? (
+                  <textarea
+                    value={values[f.name] ?? ""}
+                    disabled={saving}
+                    rows={3}
+                    onChange={(e) => setField(f.name, e.target.value)}
+                    className={`${inputCls} resize-none`}
+                  />
+                ) : (
+                  <input
+                    type={f.kind}
+                    step={f.kind === "number" ? "any" : undefined}
+                    value={values[f.name] ?? ""}
+                    disabled={saving}
+                    placeholder={f.placeholder}
+                    autoComplete="off"
+                    onChange={(e) => setField(f.name, e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleSave();
+                    }}
+                    className={inputCls}
+                  />
+                )}
+              </label>
+            ))}
+          </div>
+
+          {/* Actions */}
+          <div className="flex justify-end gap-2 pt-1">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={saving}
+              className={`${btnBase} rounded-full bg-[var(--sb-hover)] px-4 py-2 text-[12.5px] font-semibold text-[var(--sb-text)] hover:opacity-80`}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving}
+              className={`${btnBase} flex items-center gap-2 rounded-full px-5 py-2 text-[12.5px] font-semibold shadow-sm hover:opacity-90`}
+              style={{ background: "var(--sb-accent)", color: "var(--sb-on-accent)" }}
+            >
+              {saving && <Loader2 size={13} className="animate-spin" />}
+              Save changes
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Superadmin bulk action shown in the sheet-level toolbar (only visible
+// while at least one sheet is checked). Applies one survey number to every
+// lot on every checked sheet.
+function BulkSurveyNoControl({
+  sheetCount,
+  onApply,
+}: {
+  sheetCount: number;
+  onApply: (surveyNo: string, mode: "fill" | "overwrite") => Promise<number>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState("");
+  const [mode, setMode] = useState<"fill" | "overwrite">("fill");
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<{ text: string; tone: "success" | "info" | "error" } | null>(null);
+
+  async function handleApply() {
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    if (
+      mode === "overwrite" &&
+      !window.confirm(
+        `Overwrite the survey number on EVERY lot in ${sheetCount} sheet(s) with "${trimmed}"? This replaces existing values.`
+      )
+    ) {
+      return;
+    }
+    setSaving(true);
+    setMessage(null);
+    try {
+      const n = await onApply(trimmed, mode);
+      if (n === 0) {
+        setMessage({
+          text:
+            mode === "fill"
+              ? "Nothing changed. Every lot on the selected sheets already has a survey no. (use Overwrite to replace them)."
+              : `Already up to date. All lots on the selected sheets already have "${trimmed}".`,
+          tone: "info",
+        });
+      } else {
+        setMessage({ text: `Updated ${n} lot${n === 1 ? "" : "s"}.`, tone: "success" });
+      }
+      setOpen(false);
+      setValue("");
+    } catch (err) {
+      setMessage({ text: err instanceof Error ? err.message : "Couldn't save.", tone: "error" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const fieldStyle: React.CSSProperties = {
+    background: "var(--sb-bg)",
+    color: "var(--sb-text)",
+    boxShadow: `inset 0 0 0 1px ${HAIRLINE}`,
+  };
+
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {!open ? (
+        <button
+          type="button"
+          onClick={() => {
+            setMessage(null);
+            setOpen(true);
+          }}
+          className="inline-flex items-center gap-1 rounded-full border border-dashed px-2 py-[3px] text-[10.5px] font-semibold text-[var(--sb-accent-text)] hover:border-solid"
+          style={{
+            borderColor: "color-mix(in srgb, var(--sb-accent-text) 55%, transparent)",
+            background: "var(--sb-accent-bg)",
+          }}
+        >
+          <Pencil size={10} />
+          Set Survey No.
+        </button>
+      ) : (
+        <>
+          <input
+            autoFocus
+            type="text"
+            value={value}
+            disabled={saving}
+            placeholder="Survey number…"
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleApply();
+              if (e.key === "Escape") setOpen(false);
+            }}
+            className="w-[140px] rounded-md px-1.5 py-[3px] text-[11px] outline-none"
+            style={fieldStyle}
+          />
+          <select
+            value={mode}
+            disabled={saving}
+            onChange={(e) => setMode(e.target.value as "fill" | "overwrite")}
+            className="rounded-md px-1.5 py-[3px] text-[11px] outline-none"
+            style={fieldStyle}
+          >
+            <option value="fill">Only lots with no survey no.</option>
+            <option value="overwrite">Overwrite all lots</option>
+          </select>
+          <button
+            type="button"
+            onClick={handleApply}
+            disabled={saving || !value.trim()}
+            className="inline-flex items-center gap-1 rounded-full border-0 px-2.5 py-[3px] text-[10.5px] font-semibold disabled:opacity-40"
+            style={{ background: "var(--sb-accent)", color: "var(--sb-on-accent)" }}
+          >
+            {saving && <Loader2 size={10} className="animate-spin" />}
+            Apply to {sheetCount} sheet{sheetCount === 1 ? "" : "s"}
+          </button>
+          <button
+            type="button"
+            onClick={() => setOpen(false)}
+            disabled={saving}
+            className="text-[10.5px] font-medium text-[var(--sb-text-faint)] hover:text-[var(--sb-text-muted)]"
+          >
+            Cancel
+          </button>
+        </>
+      )}
+      {message && message.tone === "error" && (
+        <span
+          className="text-[11px] font-medium"
+          style={{
+            color:
+              message.tone === "error"
+                ? "#ef4444"
+                : message.tone === "info"
+                  ? "var(--sb-text-muted)"
+                  : "var(--sb-accent-text)",
+          }}
+        >
+          {message.text}
+        </span>
+      )}
+    </div>
+  );
+}
+
 function Checkbox({
   checked,
   onChange,
@@ -652,6 +1071,10 @@ export default function AttributeTable({
   onUpdateSurveyNo,
   onUpdateDocumentsUrl,
   onUpdateSurveyClass,
+  onEditSheet,
+  onEditLot,
+  canEditRecord,
+  onBulkSetSurveyNo,
 }: Props) {
   const { vars } = useSidebarTheme();
   const [expandedSheetKey, setExpandedSheetKey] = useState<string | null>(null);
@@ -664,6 +1087,12 @@ export default function AttributeTable({
   // "apply the next color pick to every lot on this sheet", not to the
   // sheet row itself (sheets don't have their own color; only lots do).
   const [sheetColorSelectedKeys, setSheetColorSelectedKeys] = useState<Set<string>>(new Set());
+
+  
+  // Which sheet/lot is currently open in the superadmin edit modal.
+  const [editTarget, setEditTarget] = useState<
+    { type: "sheet"; group: SheetGroup } | { type: "lot"; feature: LotFeature } | null
+  >(null);
 
   const searchResults = useMemo(() => {
     if (!normalizedQuery) return null;
@@ -994,6 +1423,23 @@ export default function AttributeTable({
             onDeselectAll={() => setSheetColorSelectedKeys(new Set())}
             idleLabel="Check sheets to color"
           />
+          {onBulkSetSurveyNo &&
+            sheetGroups
+              .filter((g) => sheetColorSelectedKeys.has(g.key))
+              .every((g) => !canEditRecord || canEditRecord(g.encodedBy)) && (
+            <BulkSurveyNoControl
+              sheetCount={sheetColorSelectedKeys.size}
+              onApply={(surveyNo, mode) =>
+                onBulkSetSurveyNo(
+                  sheetGroups
+                    .filter((g) => sheetColorSelectedKeys.has(g.key) && g.sheetId != null)
+                    .map((g) => g.sheetId as number),
+                  surveyNo,
+                  mode
+                )
+              }
+            />
+          )}
         </div>
       )}
 
@@ -1048,6 +1494,8 @@ export default function AttributeTable({
                 colorSelectedIds={colorSelectedIds}
                 onToggleColorSelect={toggleColorSelect}
                 onToggleColorSelectAll={() => toggleColorSelectAll(searchResults.lots)}
+                onEditLot={onEditLot ? (f) => setEditTarget({ type: "lot", feature: f }) : undefined}
+                canEditRecord={canEditRecord}
               />
             )
           ) : expandedSheet ? (
@@ -1059,6 +1507,7 @@ export default function AttributeTable({
               colorSelectedIds={colorSelectedIds}
               onToggleColorSelect={toggleColorSelect}
               onToggleColorSelectAll={() => toggleColorSelectAll(expandedSheet.lots)}
+              onEditLot={onEditLot ? (f) => setEditTarget({ type: "lot", feature: f }) : undefined}
             />
           ) : (
             <SheetsTable
@@ -1074,10 +1523,94 @@ export default function AttributeTable({
               colorSelectedKeys={sheetColorSelectedKeys}
               onToggleColorSelect={toggleSheetColorSelect}
               onToggleColorSelectAll={toggleSheetColorSelectAll}
+              onEditSheet={onEditSheet ? (g) => setEditTarget({ type: "sheet", group: g }) : undefined}
+              canEditRecord={canEditRecord}
             />
           )}
         </div>
       </div>
+
+      {editTarget?.type === "sheet" &&
+        onEditSheet &&
+        editTarget.group.sheetId != null &&
+        (() => {
+          // `opened` is the snapshot from when the modal opened (initial values).
+          // `g` is the live group, so the subtitle and "missing survey no."
+          // check stay correct after a save while the modal remains open.
+          const opened = editTarget.group;
+          const g = sheetGroups.find((x) => x.key === opened.key) ?? opened;
+          const sid = g.sheetId as number;
+          return (
+            <EditModal
+              key={opened.key}
+              title="Edit lot sheet"
+              subtitle={`Sheet ${g.sheetNo}`}
+              fields={SHEET_EDIT_FIELDS}
+              initial={{
+                sheetNo: opened.sheetNo === "—" ? "" : opened.sheetNo,
+                surveyNo: opened.surveyNo ?? "",
+                surveyClass: opened.surveyClass ?? "",
+                planUrl: opened.planUrl ?? "",
+                documentsUrl: opened.documentsUrl ?? "",
+              }}
+              validate={(v) => {
+                if (v.planUrl.trim() && !isTraceableGoogleDriveLink(v.planUrl.trim())) return PLAN_LINK_HELP_MESSAGE;
+                if (v.documentsUrl.trim() && !isTraceableGoogleDriveLink(v.documentsUrl.trim()))
+                  return PLAN_LINK_HELP_MESSAGE;
+                return null;
+              }}
+              onSave={async (v, base) => {
+                const { surveyNo, ...sheetValues } = v;
+                const newSurveyNo = surveyNo.trim();
+
+                const sheetChanged = ["sheetNo", "surveyClass", "planUrl", "documentsUrl"].some(
+                  (k) => (v[k] ?? "").trim() !== (base[k] ?? "").trim()
+                );
+                if (sheetChanged) {
+                  await onEditSheet(sid, sheetValues as unknown as SheetEditValues);
+                }
+
+                if (newSurveyNo && onBulkSetSurveyNo) {
+                  if (newSurveyNo !== (base.surveyNo ?? "").trim()) {
+                    await onBulkSetSurveyNo([sid], newSurveyNo, "overwrite");
+                  } else if (g.hasMissingSurveyNo) {
+                    await onBulkSetSurveyNo([sid], newSurveyNo, "fill");
+                  }
+                }
+              }}
+              onClose={() => setEditTarget(null)}
+            />
+          );
+        })()}
+      {editTarget?.type === "lot" &&
+        onEditLot &&
+        (() => {
+          // Live lookup so the subtitle stays correct after a save while the modal stays open.
+          const f =
+            features.find((x) => String(x.id) === String(editTarget.feature.id)) ?? editTarget.feature;
+          const opened = editTarget.feature.properties as any;
+          return (
+            <EditModal
+              key={String(editTarget.feature.id)}
+              title="Edit lot"
+              subtitle={`Lot ${(f.properties as any).lotNo ?? "—"}${
+                (f.properties as any).sheetNo ? ` · Sheet ${(f.properties as any).sheetNo}` : ""
+              }`}
+              fields={LOT_EDIT_FIELDS}
+              initial={{
+                lotNo: opened.lotNo != null ? String(opened.lotNo) : "",
+                ownerGivenName: opened.ownerGivenName ?? "",
+                ownerSurname: opened.ownerSurname ?? "",
+                dateSurveyed: toDateInputValue(opened.dateSurveyed),
+                areaSqm: opened.areaSqm != null && opened.areaSqm !== "" ? String(opened.areaSqm) : "",
+                patentNo: opened.patentNo ?? "",
+                remarks: opened.remarks ?? "",
+              }}
+              onSave={(v) => onEditLot(f.id, v as unknown as LotEditValues)}
+              onClose={() => setEditTarget(null)}
+            />
+          );
+        })()}
     </div>
   );
 }
@@ -1131,6 +1664,8 @@ function SheetsTable({
   colorSelectedKeys,
   onToggleColorSelect,
   onToggleColorSelectAll,
+  onEditSheet,
+  canEditRecord,
 }: {
   groups: SheetGroup[];
   onOpenSheet: (key: string) => void;
@@ -1150,6 +1685,8 @@ function SheetsTable({
   colorSelectedKeys: Set<string>;
   onToggleColorSelect: (key: string) => void;
   onToggleColorSelectAll: () => void;
+  onEditSheet?: (group: SheetGroup) => void;
+  canEditRecord?: (encodedBy: string | null | undefined) => boolean;
 }) {
   const allSelected = groups.length > 0 && groups.every((g) => colorSelectedKeys.has(g.key));
 
@@ -1186,7 +1723,7 @@ function SheetsTable({
           <Th numeric>Lots</Th>
           <Th numeric>Total Area (sq.m.)</Th>
           <Th>Encoded By</Th>
-          {onViewSheet && <Th>Preview</Th>}
+          {(onViewSheet || onEditSheet) && <Th>Actions</Th>}
         </tr>
       </thead>
       <tbody>
@@ -1313,24 +1850,39 @@ function SheetsTable({
                 {formatArea(g.totalArea)}
               </td>
               <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{g.encodedBy || "—"}</td>
-              {onViewSheet && (
+              {(onViewSheet || onEditSheet) && (
                 <td className="px-2.5 py-[6px]" onClick={(e) => e.stopPropagation()}>
-                  <Tooltip label="Lot Preview">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        onViewSheet({
-                          sheetNo: g.sheetNo,
-                          province: g.province,
-                          municipality: g.municipality,
-                          lots: g.lots,
-                        })
-                      }
-                      className="flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded-[7px] border-0 bg-[var(--sb-accent-bg)] p-0 text-[var(--sb-accent-text)] transition-colors duration-100 hover:opacity-75"
-                    >
-                      <Eye size={12} />
-                    </button>
-                  </Tooltip>
+                  <div className="flex items-center gap-1.5">
+                    {onViewSheet && (
+                      <Tooltip label="Lot Preview">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onViewSheet({
+                              sheetNo: g.sheetNo,
+                              province: g.province,
+                              municipality: g.municipality,
+                              lots: g.lots,
+                            })
+                          }
+                          className="flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded-[7px] border-0 bg-[var(--sb-accent-bg)] p-0 text-[var(--sb-accent-text)] transition-colors duration-100 hover:opacity-75"
+                        >
+                          <Eye size={12} />
+                        </button>
+                      </Tooltip>
+                    )}
+                    {onEditSheet && g.sheetId != null && (!canEditRecord || canEditRecord(g.encodedBy)) && (
+                      <Tooltip label="Edit sheet">
+                        <button
+                          type="button"
+                          onClick={() => onEditSheet(g)}
+                          className="flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded-[7px] border-0 bg-[var(--sb-hover)] p-0 text-[var(--sb-text-muted)] transition-colors duration-100 hover:text-[var(--sb-text)]"
+                        >
+                          <Pencil size={12} />
+                        </button>
+                      </Tooltip>
+                    )}
+                  </div>
                 </td>
               )}
             </tr>
@@ -1350,6 +1902,8 @@ function LotsTable({
   colorSelectedIds,
   onToggleColorSelect,
   onToggleColorSelectAll,
+  onEditLot,
+  canEditRecord,
 }: {
   features: LotFeature[];
   onRowClick?: (feature: LotFeature) => void;
@@ -1359,6 +1913,8 @@ function LotsTable({
   colorSelectedIds: Set<string>;
   onToggleColorSelect: (id: string) => void;
   onToggleColorSelectAll: () => void;
+  onEditLot?: (feature: LotFeature) => void;
+  canEditRecord?: (encodedBy: string | null | undefined) => boolean;
 }) {
   const columns = showSheetNo ? ["Sheet No.", ...LOT_COLUMNS] : LOT_COLUMNS;
   const visibleIds = features.map((f) => String(f.id));
@@ -1399,6 +1955,7 @@ function LotsTable({
               {h}
             </Th>
           ))}
+          {onEditLot && <Th>Actions</Th>}
         </tr>
       </thead>
       <tbody>
@@ -1499,6 +2056,21 @@ function LotsTable({
                   <span className="block max-w-[160px] cursor-help truncate">{f.properties.remarks}</span>
                 </Tooltip>
               </td>
+              {onEditLot && (
+                <td className="px-2.5 py-[6px]" onClick={(e) => e.stopPropagation()}>
+                  {(!canEditRecord || canEditRecord(f.properties.encodedBy)) && (
+                    <Tooltip label="Edit lot">
+                      <button
+                        type="button"
+                        onClick={() => onEditLot(f)}
+                        className="flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded-[7px] border-0 bg-[var(--sb-hover)] p-0 text-[var(--sb-text-muted)] transition-colors duration-100 hover:text-[var(--sb-text)]"
+                      >
+                        <Pencil size={12} />
+                      </button>
+                    </Tooltip>
+                  )}
+                </td>
+              )}
             </tr>
           );
         })}

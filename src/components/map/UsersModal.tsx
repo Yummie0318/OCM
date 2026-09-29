@@ -2,12 +2,17 @@
 
 // Target path: src/components/map/UsersModal.tsx
 //
-// Superadmin-only user management modal, opened from the account menu in
-// Sidebar.tsx (see onOpenUserManagement). Talks to:
+// Superadmin-only management modal, opened from the account menu in
+// Sidebar.tsx (see onOpenUserManagement). Two tabs: Users and Surveyors.
+// Talks to:
 //   GET   /api/users                      list + assignableRoles
 //   POST  /api/users                      create (returns temporaryPassword once)
 //   PATCH /api/users/[id]                 edit / activate / deactivate / change role
 //   POST  /api/users/[id]/reset-password  new temporary password (returned once)
+//
+// The user list ALWAYS stays visible. Add user / Edit user / the temporary
+// password screen open as a compact <SubDialog> on top of it (see
+// SubDialog.tsx), not as a replacement view.
 //
 // The server enforces every rule (last-superadmin guard, no self-demotion,
 // etc.); this UI just surfaces the server's error messages.
@@ -15,7 +20,7 @@
 // Portaled to <body>, so the theme CSS variables are re-applied on its own
 // root via `vars` from useSidebarTheme().
 
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
 import {
   X,
@@ -27,11 +32,15 @@ import {
   Copy,
   Check,
   Loader2,
-  ArrowLeft,
   ShieldAlert,
+  Users,
+  Ruler,
 } from "lucide-react";
 import { useSidebarTheme } from "./SidebarThemeContext";
 import { uiFont } from "./sidebarTheme";
+import { toast } from "@/components/notifications/Toaster";
+import SurveyorsPanel from "./SurveyorsPanel";
+import SubDialog from "./SubDialog";
 
 type Role = "superadmin" | "admin" | "surveyor" | "user";
 
@@ -47,6 +56,8 @@ interface UserRow {
   created_by_username: string | null;
 }
 
+// "list" = nothing on top. "form" and "credentials" render a SubDialog over
+// the (still visible) user list.
 type View =
   | { kind: "list" }
   | { kind: "form"; user: UserRow | null } // user === null -> create
@@ -55,12 +66,13 @@ type View =
 const HAIRLINE = "color-mix(in srgb, var(--sb-border) 75%, transparent)";
 const HAIRLINE_SOFT = "color-mix(in srgb, var(--sb-border) 45%, transparent)";
 
+
 // Defensive `border-0 p-0`: globals.css has an unscoped `button` rule that
 // can outrank Tailwind utilities (same reason Sidebar.tsx sets these).
 const btnBase = "border-0 p-0 transition-colors duration-100 disabled:cursor-not-allowed disabled:opacity-40";
 
 const inputCls =
-  "w-full rounded-[10px] border border-[var(--sb-border)] bg-[var(--sb-bg)] px-3 py-2 text-[13px] text-[var(--sb-text)] outline-none transition-all placeholder:text-[var(--sb-text-faint)] focus:border-[var(--sb-accent)] focus:ring-4 focus:ring-[var(--sb-accent)]/10";
+  "w-full min-w-0 rounded-[10px] border border-[var(--sb-border)] bg-[var(--sb-bg)] px-3 py-2 text-[13px] text-[var(--sb-text)] outline-none transition-all placeholder:text-[var(--sb-text-faint)] focus:border-[var(--sb-accent)] focus:ring-4 focus:ring-[var(--sb-accent)]/10";
 
 const ROLE_STYLE: Record<Role, { bg: string; fg: string; label: string }> = {
   superadmin: { bg: "rgba(239, 68, 68, 0.14)", fg: "#ef4444", label: "Super admin" },
@@ -138,6 +150,19 @@ export default function UsersModal({
   const [view, setView] = useState<View>({ kind: "list" });
   const [busyId, setBusyId] = useState<number | null>(null);
   const [copied, setCopied] = useState(false);
+  const [tab, setTab] = useState<"users" | "surveyors">("users");
+  const [surveyorsBusy, setSurveyorsBusy] = useState(false);
+  // null until the Surveyors tab has been opened once and reported its count.
+  const [surveyorCount, setSurveyorCount] = useState<number | null>(null);
+  // True while the Surveyors panel has something on top (add dialog, inline
+  // edit, delete confirmation) that should take Escape before this modal does.
+  const [surveyorEscape, setSurveyorEscape] = useState(false);
+  // True while the create/edit form has a request in flight.
+  const [formSaving, setFormSaving] = useState(false);
+  // Blocks every way of dismissing the modal until the request finishes.
+  const locked = formSaving || busyId !== null || surveyorsBusy;
+  // Something is open on top of the main dialog.
+  const subOpen = (tab === "users" && view.kind !== "list") || surveyorEscape;
 
   useEffect(() => setMounted(true), []);
 
@@ -160,6 +185,7 @@ export default function UsersModal({
   // Fresh state + fresh data every time the modal opens.
   useEffect(() => {
     if (!open) return;
+    setTab("users");
     setView({ kind: "list" });
     setSearch("");
     setRoleFilter("all");
@@ -168,16 +194,23 @@ export default function UsersModal({
     load();
   }, [open, load]);
 
+  // Escape closes the top-most layer first.
   useEffect(() => {
     if (!open) return;
     function onKey(e: KeyboardEvent) {
-      if (e.key !== "Escape") return;
+      if (e.key !== "Escape" || locked) return;
+      if (tab === "surveyors") {
+        // The Surveyors panel handles its own layers; only close the modal
+        // when nothing is open on top.
+        if (!surveyorEscape) onClose();
+        return;
+      }
       if (view.kind === "list") onClose();
       else setView({ kind: "list" });
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, view.kind, onClose]);
+  }, [open, view.kind, tab, surveyorEscape, onClose, locked]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -203,9 +236,16 @@ export default function UsersModal({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Couldn't update user.");
+      toast.success(u.is_active ? "User deactivated" : "User reactivated", {
+        description: u.is_active
+          ? `${u.username} can no longer sign in.`
+          : `${u.username} can sign in again.`,
+      });
       await load();
     } catch (err) {
-      setListError(err instanceof Error ? err.message : "Couldn't update user.");
+      const msg = err instanceof Error ? err.message : "Couldn't update user.";
+      toast.error("Couldn't update user", { description: msg });
+      setListError(msg);
     } finally {
       setBusyId(null);
     }
@@ -220,10 +260,13 @@ export default function UsersModal({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Couldn't reset password.");
       setCopied(false);
+      toast.success("Password reset", { description: `A new temporary password was generated for ${u.username}.` });
       setView({ kind: "credentials", username: u.username, password: data.temporaryPassword, reason: "reset" });
       load();
     } catch (err) {
-      setListError(err instanceof Error ? err.message : "Couldn't reset password.");
+      const msg = err instanceof Error ? err.message : "Couldn't reset password.";
+      toast.error("Couldn't reset password", { description: msg });
+      setListError(msg);
     } finally {
       setBusyId(null);
     }
@@ -232,6 +275,7 @@ export default function UsersModal({
   async function copyPassword(text: string) {
     try {
       await navigator.clipboard.writeText(text);
+      toast.success("Password copied");
       setCopied(true);
       setTimeout(() => setCopied(false), 1800);
     } catch {
@@ -241,95 +285,146 @@ export default function UsersModal({
 
   if (!mounted || !open) return null;
 
-  const title =
-    view.kind === "list"
-      ? "User management"
-      : view.kind === "form"
-        ? view.user
-          ? "Edit user"
-          : "Add user"
-        : view.reason === "created"
-          ? "User created"
-          : "Password reset";
+  const title = tab === "surveyors" ? "Surveyors" : "User management";
 
   return createPortal(
     <div
       style={vars}
       className={`${uiFont.className} fixed inset-0 z-[100] flex items-center justify-center p-3 antialiased sm:p-6`}
     >
-      <div className="absolute inset-0" style={{ background: theme.overlayBg }} onClick={onClose} />
+      <div
+        className="absolute inset-0"
+        style={{ background: theme.overlayBg }}
+        onClick={() => {
+          if (!locked && !subOpen) onClose();
+        }}
+      />
 
       <div
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="relative flex max-h-[88dvh] w-full max-w-[940px] flex-col overflow-hidden rounded-[18px] text-[var(--sb-text)]"
+        className="relative flex h-[min(680px,88dvh)] w-full max-w-[940px] flex-col overflow-hidden rounded-[18px] text-[var(--sb-text)]"
         style={{ background: "var(--sb-bg-elevated)", boxShadow: "var(--sb-shadow)", border: `1px solid ${HAIRLINE}` }}
       >
         {/* Header */}
-        <div className="flex flex-shrink-0 items-center gap-3 px-5 py-4" style={{ borderBottom: `1px solid ${HAIRLINE}` }}>
-          {view.kind !== "list" && (
-            <IconBtn label="Back to users" onClick={() => setView({ kind: "list" })}>
-              <ArrowLeft size={15} />
-            </IconBtn>
-          )}
+        <div className="flex flex-shrink-0 items-center gap-3 px-4 py-3.5 sm:px-5 sm:py-4" style={{ borderBottom: `1px solid ${HAIRLINE}` }}>
+          <span
+            className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-[10px]"
+            style={{ background: "var(--sb-accent-bg)", color: "var(--sb-accent-text)" }}
+          >
+            {tab === "surveyors" ? <Ruler size={15} /> : <Users size={15} />}
+          </span>
           <div className="min-w-0 flex-1">
             <h2 className="truncate text-[15px] font-bold tracking-tight">{title}</h2>
-            {view.kind === "list" && (
+            {tab === "users" ? (
               <p className="text-[11.5px] text-[var(--sb-text-faint)]">
                 {loading ? "Loading…" : `${filtered.length} of ${users.length} user${users.length === 1 ? "" : "s"}`}
               </p>
+            ) : (
+              <p className="text-[11.5px] text-[var(--sb-text-faint)]">Shown in the Surveyor dropdown of the lot form</p>
             )}
           </div>
-          {view.kind === "list" && (
-            <button
-              type="button"
-              onClick={() => setView({ kind: "form", user: null })}
-              className={`${btnBase} flex flex-shrink-0 items-center gap-1.5 rounded-full px-3.5 py-[7px] text-[12.5px] font-semibold shadow-sm hover:opacity-90`}
-              style={{ background: theme.accent, color: theme.onAccent }}
-            >
-              <UserPlus size={13} />
-              Add user
-            </button>
-          )}
-          <IconBtn label="Close" onClick={onClose}>
+          <IconBtn label="Close" onClick={onClose} disabled={locked}>
             <X size={16} />
           </IconBtn>
         </div>
 
-        {/* Body */}
-        {view.kind === "list" && (
+        {/* Tabs — same pill strip as the Project layers dialog. */}
+        <div className="flex-shrink-0 px-5 pt-3">
+          <div role="tablist" className="flex w-full items-center gap-1 rounded-full bg-[var(--sb-hover)] p-1 sm:w-fit">
+            {(
+              [
+                ["users", "Users", Users, users.length],
+                ["surveyors", "Surveyors", Ruler, surveyorCount],
+              ] as const
+            ).map(([value, label, Icon, count]) => {
+              const active = tab === value;
+              return (
+                <button
+                  key={value}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  disabled={locked}
+                  onClick={() => setTab(value)}
+                  className={`flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-full border-0 px-4 py-[7px] text-[12px] font-semibold transition-colors duration-100 disabled:cursor-not-allowed disabled:opacity-60 sm:flex-none ${
+                    active
+                      ? "bg-[var(--sb-bg)] text-[var(--sb-accent)] shadow-sm"
+                      : "bg-transparent text-[var(--sb-text-muted)] hover:text-[var(--sb-text)]"
+                  }`}
+                >
+                  <Icon size={13} className="flex-shrink-0" />
+                  <span className="min-w-0 truncate">{label}</span>
+                  {count !== null && count > 0 && (
+                    <span
+                      className={`flex h-4 min-w-4 flex-shrink-0 items-center justify-center rounded-full px-1 text-[9px] font-bold tabular-nums ${
+                        active
+                          ? "bg-[var(--sb-accent)] text-[var(--sb-on-accent)]"
+                          : "bg-[var(--sb-border)] text-[var(--sb-text-muted)]"
+                      }`}
+                    >
+                      {count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Users tab — the list is ALWAYS rendered; forms open on top of it. */}
+        {tab === "users" && (
           <>
-            <div className="flex flex-shrink-0 flex-wrap items-center gap-2 px-5 py-3" style={{ borderBottom: `1px solid ${HAIRLINE_SOFT}` }}>
-              <div className="relative min-w-[180px] flex-1">
-                <Search size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--sb-text-faint)]" />
-                <input
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search username or email…"
-                  className={`${inputCls} !rounded-full !py-[7px] !pl-8 !text-[12.5px]`}
-                />
+            {/* Toolbar: on phones = search + Add on row 1, filters on row 2;
+                on sm+ everything sits on one wrapping row (`sm:contents`). */}
+            <div
+              className="flex flex-shrink-0 flex-col gap-2 px-5 py-3 sm:flex-row sm:flex-wrap sm:items-center"
+              style={{ borderBottom: `1px solid ${HAIRLINE_SOFT}` }}
+            >
+              <div className="flex items-center gap-2 sm:contents">
+                <div className="relative min-w-0 flex-1 sm:min-w-[180px]">
+                  <Search size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--sb-text-faint)]" />
+                  <input
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder="Search username or email…"
+                    className={`${inputCls} !rounded-full !py-[7px] !pl-8 !text-[12.5px]`}
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setView({ kind: "form", user: null })}
+                  className={`${btnBase} flex flex-shrink-0 items-center gap-1.5 rounded-full px-3.5 py-[7px] text-[12.5px] font-semibold shadow-sm hover:opacity-90 sm:order-last`}
+                  style={{ background: theme.accent, color: theme.onAccent }}
+                >
+                  <UserPlus size={13} />
+                  <span className="sm:hidden">Add</span>
+                  <span className="hidden sm:inline">Add user</span>
+                </button>
               </div>
-              <select
-                value={roleFilter}
-                onChange={(e) => setRoleFilter(e.target.value as "all" | Role)}
-                className={`${inputCls} !w-auto !rounded-full !py-[7px] !text-[12.5px]`}
-              >
-                <option value="all">All roles</option>
-                <option value="superadmin">Super admin</option>
-                <option value="admin">Admin</option>
-                <option value="surveyor">Surveyor</option>
-                <option value="user">User</option>
-              </select>
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value as "all" | "active" | "disabled")}
-                className={`${inputCls} !w-auto !rounded-full !py-[7px] !text-[12.5px]`}
-              >
-                <option value="all">All statuses</option>
-                <option value="active">Active</option>
-                <option value="disabled">Disabled</option>
-              </select>
+              <div className="flex items-center gap-2 sm:contents">
+                <select
+                  value={roleFilter}
+                  onChange={(e) => setRoleFilter(e.target.value as "all" | Role)}
+                  className={`${inputCls} !w-auto !rounded-full !py-[7px] !text-[12.5px]`}
+                >
+                  <option value="all">All roles</option>
+                  <option value="superadmin">Super admin</option>
+                  <option value="admin">Admin</option>
+                  <option value="surveyor">Surveyor</option>
+                  <option value="user">User</option>
+                </select>
+                <select
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value as "all" | "active" | "disabled")}
+                  className={`${inputCls} !w-auto !rounded-full !py-[7px] !text-[12.5px]`}
+                >
+                  <option value="all">All statuses</option>
+                  <option value="active">Active</option>
+                  <option value="disabled">Disabled</option>
+                </select>
+              </div>
             </div>
 
             {listError && (
@@ -449,51 +544,73 @@ export default function UsersModal({
           </>
         )}
 
-        {view.kind === "form" && (
-          <UserForm
-            key={view.user?.id ?? "new"}
-            user={view.user}
-            roles={roles}
-            isSelf={view.user?.id === currentUserId}
-            onCancel={() => setView({ kind: "list" })}
-            onDone={(r) => {
-              load();
-              if (r.temporaryPassword) {
-                setCopied(false);
-                setView({ kind: "credentials", username: r.username, password: r.temporaryPassword, reason: "created" });
-              } else {
-                setView({ kind: "list" });
-              }
-            }}
+        {/* Surveyors tab */}
+        {tab === "surveyors" && (
+          <SurveyorsPanel
+            onBusyChange={setSurveyorsBusy}
+            onCountChange={setSurveyorCount}
+            onEscapeCaptureChange={setSurveyorEscape}
           />
         )}
 
-        {view.kind === "credentials" && (
-          <div className="flex flex-col gap-4 overflow-auto px-5 py-6">
-            <div
-              className="flex items-start gap-2.5 rounded-[12px] border px-3.5 py-3 text-[12.5px]"
-              style={{ background: "rgba(245, 158, 11, 0.1)", borderColor: "rgba(245, 158, 11, 0.4)", color: "var(--sb-text)" }}
-            >
-              <ShieldAlert size={16} className="mt-0.5 flex-shrink-0 text-amber-500" />
-              <span>
-                This temporary password is shown <strong>only once</strong>. Copy it and share it with the user
-                securely. They&apos;ll be asked to choose a new password the first time they sign in.
-              </span>
-            </div>
+        {/* Compact dialogs on top of the user list */}
+        {tab === "users" && view.kind === "form" && (
+          <SubDialog
+            title={view.user ? "Edit user" : "Add user"}
+            subtitle={view.user ? view.user.username : "A temporary password is generated for the new user"}
+            onClose={() => setView({ kind: "list" })}
+            locked={formSaving}
+          >
+            <UserForm
+              key={view.user?.id ?? "new"}
+              user={view.user}
+              roles={roles}
+              isSelf={view.user?.id === currentUserId}
+              onSavingChange={setFormSaving}
+              onCancel={() => setView({ kind: "list" })}
+              onDone={(r) => {
+                load();
+                if (r.temporaryPassword) {
+                  setCopied(false);
+                  setView({ kind: "credentials", username: r.username, password: r.temporaryPassword, reason: "created" });
+                } else {
+                  setView({ kind: "list" });
+                }
+              }}
+            />
+          </SubDialog>
+        )}
 
-            <div className="grid gap-3 sm:grid-cols-2">
+        {tab === "users" && view.kind === "credentials" && (
+          <SubDialog
+            title={view.reason === "created" ? "User created" : "Password reset"}
+            onClose={() => setView({ kind: "list" })}
+          >
+            <div className="flex flex-col gap-3.5 px-4 py-4">
+              <div
+                className="flex items-start gap-2.5 rounded-[12px] border px-3 py-2.5 text-[12px]"
+                style={{ background: "rgba(245, 158, 11, 0.1)", borderColor: "rgba(245, 158, 11, 0.4)", color: "var(--sb-text)" }}
+              >
+                <ShieldAlert size={15} className="mt-0.5 flex-shrink-0 text-amber-500" />
+                <span>
+                  This temporary password is shown <strong>only once</strong>. Copy it and share it securely. The user
+                  will choose a new password at first sign-in.
+                </span>
+              </div>
+
               <div>
                 <div className="mb-1 text-[11px] font-semibold text-[var(--sb-text-muted)]">Username</div>
-                <div className={`${inputCls} font-mono`}>{view.username}</div>
+                <div className={`${inputCls} break-all font-mono`}>{view.username}</div>
               </div>
+
               <div>
                 <div className="mb-1 text-[11px] font-semibold text-[var(--sb-text-muted)]">Temporary password</div>
-                <div className="flex items-center gap-2">
-                  <div className={`${inputCls} select-all font-mono`}>{view.password}</div>
+                <div className="flex items-stretch gap-2">
+                  <div className={`${inputCls} flex-1 select-all break-all font-mono`}>{view.password}</div>
                   <button
                     type="button"
                     onClick={() => copyPassword(view.password)}
-                    className={`${btnBase} flex h-[38px] flex-shrink-0 items-center gap-1.5 rounded-[10px] px-3 text-[12px] font-semibold hover:opacity-90`}
+                    className={`${btnBase} flex flex-shrink-0 items-center gap-1.5 rounded-[10px] px-3 text-[12px] font-semibold hover:opacity-90`}
                     style={{ background: "var(--sb-accent-bg)", color: "var(--sb-accent-text)" }}
                   >
                     {copied ? <Check size={13} /> : <Copy size={13} />}
@@ -501,19 +618,19 @@ export default function UsersModal({
                   </button>
                 </div>
               </div>
-            </div>
 
-            <div className="flex justify-end">
-              <button
-                type="button"
-                onClick={() => setView({ kind: "list" })}
-                className={`${btnBase} rounded-full px-5 py-2 text-[12.5px] font-semibold shadow-sm hover:opacity-90`}
-                style={{ background: theme.accent, color: theme.onAccent }}
-              >
-                Done
-              </button>
+              <div className="flex justify-end pt-1">
+                <button
+                  type="button"
+                  onClick={() => setView({ kind: "list" })}
+                  className={`${btnBase} rounded-full px-5 py-2 text-[12.5px] font-semibold shadow-sm hover:opacity-90`}
+                  style={{ background: theme.accent, color: theme.onAccent }}
+                >
+                  Done
+                </button>
+              </div>
             </div>
-          </div>
+          </SubDialog>
         )}
       </div>
     </div>,
@@ -521,18 +638,20 @@ export default function UsersModal({
   );
 }
 
-// ---------------- Create / edit form ----------------
+// ---------------- Create / edit form (rendered inside a SubDialog) ----------------
 
 function UserForm({
   user,
   roles,
   isSelf,
+  onSavingChange,
   onCancel,
   onDone,
 }: {
   user: UserRow | null;
   roles: Role[];
   isSelf: boolean;
+  onSavingChange?: (saving: boolean) => void;
   onCancel: () => void;
   onDone: (result: { username: string; temporaryPassword?: string }) => void;
 }) {
@@ -544,15 +663,51 @@ function UserForm({
   const [email, setEmail] = useState(user?.email ?? "");
   const [role, setRole] = useState<Role>(user?.usertype ?? (roleOptions.includes("user") ? "user" : roleOptions[0]));
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // What the user looked like when the form opened, so "no changes" can be
+  // detected and only real edits are sent.
+  const baseline = useRef({
+    username: user?.username ?? "",
+    email: user?.email ?? "",
+    role: user?.usertype ?? (roleOptions.includes("user") ? "user" : roleOptions[0]),
+  });
+
+  // Clear the notice as soon as something is edited again.
+  useEffect(() => {
+    setNotice(null);
+  }, [username, email, role]);
+
+  // Tell the parent when a request is in flight, and release the lock if
+  // the form unmounts (e.g. after a successful create moves to the
+  // temporary-password dialog).
+  useEffect(() => {
+    onSavingChange?.(saving);
+  }, [saving, onSavingChange]);
+  useEffect(() => {
+    return () => onSavingChange?.(false);
+  }, [onSavingChange]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
+    setNotice(null);
 
-    if (!username.trim() || !email.trim()) {
+    const uname = username.trim();
+    const mail = email.trim();
+
+    if (!uname || !mail) {
       setError("Username and email are required.");
       return;
+    }
+
+    if (editing) {
+      const b = baseline.current;
+      if (uname === b.username && mail === b.email && role === b.role) {
+        setNotice("No changes to save. This user is already up to date.");
+        toast.info("No changes to save", { description: "This user is already up to date." });
+        return;
+      }
     }
 
     setSaving(true);
@@ -562,34 +717,40 @@ function UserForm({
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              username: username.trim(),
-              email: email.trim(),
-              ...(role !== user.usertype ? { usertype: role } : {}),
+              username: uname,
+              email: mail,
+              ...(role !== baseline.current.role ? { usertype: role } : {}),
             }),
           })
         : await fetch("/api/users", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ username: username.trim(), email: email.trim(), usertype: role }),
+            body: JSON.stringify({ username: uname, email: mail, usertype: role }),
           });
       const data = await res.json();
-      if (!res.ok) {
-        // PATCH answers 400 "Nothing to update." when nothing changed — not really an error here.
-        if (editing && data.error === "Nothing to update.") {
-          onDone({ username: username.trim() });
-          return;
-        }
-        throw new Error(data.error || "Something went wrong.");
+      if (!res.ok) throw new Error(data.error || "Something went wrong.");
+
+      if (editing) {
+        toast.success("User updated", { description: `${uname} was saved.` });
+        setSaving(false);
+        onDone({ username: uname });
+        return;
       }
-      onDone({ username: username.trim(), temporaryPassword: data.temporaryPassword });
+
+      toast.success("User created", {
+        description: `${uname} was added. Share the temporary password securely.`,
+      });
+      onDone({ username: uname, temporaryPassword: data.temporaryPassword });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong.");
+      const msg = err instanceof Error ? err.message : "Something went wrong.";
+      setError(msg);
+      toast.error(editing ? "Couldn't update user" : "Couldn't create user", { description: msg });
       setSaving(false);
     }
   }
 
   return (
-    <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-4 overflow-auto px-5 py-6">
+    <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-3.5 px-4 py-4">
       {error && (
         <div
           role="alert"
@@ -599,36 +760,46 @@ function UserForm({
           {error}
         </div>
       )}
+      {notice && !error && (
+        <div
+          className="rounded-[10px] border px-3 py-2 text-[12.5px] font-medium"
+          style={{ background: "var(--sb-accent-bg)", borderColor: "var(--sb-border)", color: "var(--sb-accent-text)" }}
+        >
+          {notice}
+        </div>
+      )}
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <label className="flex flex-col gap-1.5">
-          <span className="text-[12px] font-semibold">Username</span>
-          <input
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            maxLength={50}
-            autoComplete="off"
-            className={inputCls}
-          />
-        </label>
-        <label className="flex flex-col gap-1.5">
-          <span className="text-[12px] font-semibold">Email</span>
-          <input
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            autoComplete="off"
-            className={inputCls}
-          />
-        </label>
-      </div>
+      <label className="flex min-w-0 flex-col gap-1">
+        <span className="text-[11.5px] font-semibold text-[var(--sb-text-muted)]">Username</span>
+        <input
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          maxLength={50}
+          autoComplete="off"
+          autoFocus
+          disabled={saving}
+          className={inputCls}
+        />
+      </label>
 
-      <label className="flex flex-col gap-1.5 sm:max-w-[50%]">
-        <span className="text-[12px] font-semibold">Role</span>
+      <label className="flex min-w-0 flex-col gap-1">
+        <span className="text-[11.5px] font-semibold text-[var(--sb-text-muted)]">Email</span>
+        <input
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          autoComplete="off"
+          disabled={saving}
+          className={inputCls}
+        />
+      </label>
+
+      <label className="flex min-w-0 flex-col gap-1">
+        <span className="text-[11.5px] font-semibold text-[var(--sb-text-muted)]">Role</span>
         <select
           value={role}
           onChange={(e) => setRole(e.target.value as Role)}
-          disabled={isSelf}
+          disabled={isSelf || saving}
           className={`${inputCls} disabled:opacity-60`}
         >
           {roleOptions.map((r) => (
@@ -641,8 +812,8 @@ function UserForm({
       </label>
 
       {!editing && (
-        <p className="text-[11.5px] text-[var(--sb-text-faint)]">
-          A temporary password will be generated for you to hand over. The user must change it at first sign-in.
+        <p className="text-[11px] leading-snug text-[var(--sb-text-faint)]">
+          The user must change the temporary password at first sign-in.
         </p>
       )}
 
