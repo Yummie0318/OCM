@@ -208,6 +208,8 @@ import type { ActivityLogRow } from "@/components/NotificationBell";
 import CreateShapefileModal from "@/components/CreateShapefileModal";
 import DownloadLayerModal from "@/components/map/DownloadLayerModal";
 import UsersModal from "@/components/map/UsersModal";
+import ForestAttributeTable from "@/components/map/ForestAttributeTable";
+import { isForestFeature } from "@/lib/forest";
 import { toast } from "@/components/notifications/Toaster";
 
 
@@ -762,6 +764,14 @@ function MapViewerPageInner() {
   // sidebar layer toggle (see handleToggle) change whether it's showing
   // at all.
   function selectFeatureFromTable(feature: LotFeature) {
+    if (isForestFeature(feature)) {
+      // Forest polygons have no lot details. Close any open lot panel,
+      // then just highlight + zoom.
+      closeDetail();
+      setSelectedId(feature.id);
+      setFocusFeature({ feature, token: Date.now() });
+      return;
+    }
     setSelectedId(feature.id);
     setSelectedFeature(feature);
     setSheetPreview(null);
@@ -1332,13 +1342,17 @@ function MapViewerPageInner() {
       // Search (search:*) and notification-bell (sheet:*) picks stay quiet,
       // because their data is already loaded before they reach this effect.
       const isProjection =
-        key.startsWith("filter:") || key.startsWith("proj:") || key.startsWith("year:");
+        key.startsWith("filter:") ||
+        key.startsWith("proj:") ||
+        key.startsWith("year:") ||
+        key.startsWith("forest:");
       const toastId = `project:${key}`;
       if (isProjection) {
         toast.loading("Projecting layer…", { id: toastId, description: sel.label });
       }
 
-      fetch(`/api/map/lots?${params}`)
+      const endpoint = key.startsWith("forest:") ? "/api/map/forest" : "/api/map/lots";
+      fetch(`${endpoint}?${params}`)
         .then((r) => {
           if (!r.ok) throw new Error(`Request failed (${r.status})`);
           return r.json();
@@ -1463,9 +1477,14 @@ function MapViewerPageInner() {
   }, [allFeatures]);
 
   const tableFeatures = useMemo(() => {
-    if (tableFilterKey && layerData[tableFilterKey]) return layerData[tableFilterKey];
-    return allFeatures;
+    const base =
+      tableFilterKey && layerData[tableFilterKey] ? layerData[tableFilterKey] : allFeatures;
+    // Lots win when mixed with forest. Forest shows only when it's all that's there.
+    const lots = base.filter((f) => !isForestFeature(f));
+    return lots.length > 0 ? lots : base;
   }, [tableFilterKey, layerData, allFeatures]);
+
+  const tableIsForest = tableFeatures.length > 0 && tableFeatures.every(isForestFeature);
 
   const tableSummary = useMemo(() => {
     const count = tableFeatures.length;
@@ -1779,6 +1798,17 @@ function MapViewerPageInner() {
 
             {tableExpanded && (
               <div style={{ height: tableHeight - TABLE_BAR_HEIGHT }} className="overflow-hidden">
+                {tableIsForest ? (
+                  <ForestAttributeTable
+                    features={tableFeatures}
+                    selectedId={selectedId}
+                    onRowClick={selectFeatureFromTable}
+                    lotColors={lotColors}
+                    onSetLotColors={handleSetLotColors}
+                    filterLabel={tableFilterLabel}
+                    onClearFilter={() => setTableFilterKey(null)}
+                  />
+                ) : (
                 <AttributeTable
                   features={tableFeatures}
                   onRowClick={selectFeatureFromTable}
@@ -1801,6 +1831,7 @@ function MapViewerPageInner() {
                   onBulkSetSurveyNo={isSuperAdmin || isAdmin ? handleBulkSetSurveyNo : undefined}
                   canEditRecord={canEditRecord}
                 />
+                )}
               </div>
             )}
           </div>

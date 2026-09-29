@@ -146,6 +146,7 @@
 import { useEffect, useRef } from "react";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { LotFeature } from "@/lib/geo";
+import { FOREST_COLOR } from "@/lib/forest";
 
 interface FocusPoint {
   lng: number;
@@ -533,6 +534,21 @@ function buildPopupHtml(p: Record<string, unknown>): string {
   `;
 }
 
+function buildForestPopupHtml(p: Record<string, unknown>): string {
+  const ha =
+    p.areaHa != null
+      ? `${escapeHtml(Number(p.areaHa).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }))} ha`
+      : "—";
+  return `
+    <div class="lot-popup">
+      <div class="lot-popup-header"><span class="lot-popup-title">${escapeHtml(p.label ?? "Forest")}</span></div>
+      <div class="lot-popup-body">
+        <dl class="lot-popup-grid"><dt>Area</dt><dd>${ha}</dd></dl>
+      </div>
+    </div>
+  `;
+}
+
 export default function MapCanvas({
   features,
   selectedId,
@@ -752,7 +768,7 @@ export default function MapCanvas({
             className: "lot-popup-container",
           })
             .setLngLat(e.lngLat)
-            .setHTML(buildPopupHtml(p))
+            .setHTML(p.kind === "forest" ? buildForestPopupHtml(p) : buildPopupHtml(p))
             .addTo(map);
 
           // Clicking the polygon only opens this popup (and reports
@@ -824,9 +840,21 @@ export default function MapCanvas({
       ...f,
       properties: {
         ...f.properties,
-        __color: colors?.[String(f.id)] ?? null,
+        __color:
+          colors?.[String(f.id)] ??
+          ((f.properties as any).kind === "forest"
+            ? FOREST_COLOR[(f.properties as any).forestType]
+            : null) ??
+          null,
       },
     }));
+
+    // Forests first so lots draw on top of them.
+    withColor.sort(
+      (a, b) =>
+        Number((a.properties as any).kind === "forest" ? 0 : 1) -
+        Number((b.properties as any).kind === "forest" ? 0 : 1)
+    );
 
     source.setData({ type: "FeatureCollection", features: withColor });
 
@@ -842,7 +870,12 @@ export default function MapCanvas({
       maxLng = -Infinity,
       maxLat = -Infinity;
 
-    for (const f of feats) {
+    // Fit to the lots when any are loaded. Forest polygons only drive the
+    // zoom when there are no lots at all.
+    const lotFeats = feats.filter((f) => (f.properties as any).kind !== "forest");
+    const boundsFeats = lotFeats.length > 0 ? lotFeats : feats;
+
+    for (const f of boundsFeats) {
       for (const ring of f.geometry.coordinates) {
         for (const [lng, lat] of ring) {
           if (lng < minLng) minLng = lng;

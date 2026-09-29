@@ -182,6 +182,7 @@ import {
   Filter,
   Download,
   Users,
+  Trees,
 } from "lucide-react";
 import type { SelectionMeta, TreeNodeData, LotSearchResult } from "@/lib/geo";
 import { uiFont, ACCENT_PRESETS, type SidebarTheme } from "./sidebarTheme";
@@ -189,6 +190,7 @@ import { useSidebarTheme } from "./SidebarThemeContext";
 import SearchBar from "./SearchBar";
 import NotificationBell, { type ActivityLogRow } from "@/components/NotificationBell";
 import ProjectionModal, { type ProjectionResult } from "./ProjectionModal";
+import { FOREST_TYPES } from "@/lib/forest";
 
 interface SidebarProps {
   activeSelections: Record<string, SelectionMeta>;
@@ -1023,6 +1025,7 @@ function SelectedPanel({
           const isSheetFromLog = key.startsWith("sheet:");
           const isProjMuni = key.startsWith("proj:muni:");
           const isProjBrgy = key.startsWith("proj:brgy:");
+                    const isForest = key.startsWith("forest:");
           return (
             <div
               key={key}
@@ -1042,7 +1045,11 @@ function SelectedPanel({
               ) : isProjBrgy ? (
                 <MapPin size={13} className="mt-0.5 flex-shrink-0 text-[var(--sb-accent)]" />
               ) : (
-                <CalendarDays size={13} className="mt-0.5 flex-shrink-0 text-[var(--sb-accent)]" />
+                isForest ? (
+                  <Trees size={13} className="mt-0.5 flex-shrink-0 text-[var(--sb-accent)]" />
+                ) : (
+                  <CalendarDays size={13} className="mt-0.5 flex-shrink-0 text-[var(--sb-accent)]" />
+                )
               )}
               <Tooltip label={sel.label || "Untitled"} side="top">
                 <span className="min-w-0 flex-1 text-[12px] font-medium leading-snug text-[var(--sb-accent-text)]">
@@ -1106,6 +1113,98 @@ function SelectedPanel({
   );
 }
 
+// ---------------- Forest Cover (checkbox tree above Municipalities) ----------------
+
+function ForestCoverSection({
+  activeSelections,
+  onToggle,
+}: {
+  activeSelections: Record<string, SelectionMeta>;
+  onToggle: (key: string, meta: SelectionMeta | null) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [counts, setCounts] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    fetch("/api/map/forest?summary=1")
+      .then((r) => r.json())
+      .then((rows: { forest_type: string; polygons: number }[]) => {
+        if (Array.isArray(rows)) {
+          setCounts(Object.fromEntries(rows.map((r) => [r.forest_type, r.polygons])));
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const keyOf = (t: string) => `forest:${t}`;
+  const metaOf = (t: (typeof FOREST_TYPES)[number]): SelectionMeta => ({
+    query: { forest_type: t.type },
+    label: t.label,
+  });
+
+  const checkedCount = FOREST_TYPES.filter((t) => activeSelections[keyOf(t.type)]).length;
+  const allChecked = checkedCount === FOREST_TYPES.length;
+  const total = Object.values(counts).reduce((a, b) => a + b, 0);
+
+  function toggleAll() {
+    FOREST_TYPES.forEach((t) => {
+      const on = !!activeSelections[keyOf(t.type)];
+      if (allChecked) onToggle(keyOf(t.type), null);
+      else if (!on) onToggle(keyOf(t.type), metaOf(t));
+    });
+  }
+
+  return (
+    <div className="mb-3">
+      <FolderRow
+        expanded={expanded}
+        onToggle={() => setExpanded((v) => !v)}
+        icon={
+          <Trees
+            size={13}
+            className={checkedCount ? "text-[var(--sb-accent)]" : "text-[var(--sb-text-faint)]"}
+          />
+        }
+        label="Forest Cover"
+        count={total}
+        active={checkedCount > 0}
+        showCheckbox
+        checked={allChecked}
+        onCheckToggle={toggleAll}
+      />
+      {expanded && (
+        <div className="ml-[25px]" style={{ borderLeft: `1px solid ${hairlineSoft}`, paddingLeft: 1 }}>
+          {FOREST_TYPES.map((t) => {
+            const key = keyOf(t.type);
+            const checked = !!activeSelections[key];
+            const toggle = () => onToggle(key, checked ? null : metaOf(t));
+            return (
+              <div
+                key={t.type}
+                className={`flex w-full items-center gap-2 rounded-[9px] py-[5px] pl-1.5 pr-2 transition-colors duration-100 ${
+                  checked ? "bg-[var(--sb-accent-bg)]" : "hover:bg-[var(--sb-hover)]"
+                }`}
+              >
+                <Checkbox checked={checked} onChange={toggle} />
+                <span className="h-3 w-3 flex-shrink-0 rounded-[4px]" style={{ background: t.color }} />
+                <span
+                  onClick={toggle}
+                  className="min-w-0 flex-1 cursor-pointer truncate text-[12.5px] font-medium text-[var(--sb-text)]"
+                >
+                  {t.label}
+                </span>
+                <span className="flex-shrink-0 tabular-nums text-[10.5px] text-[var(--sb-text-faint)]">
+                  ({counts[t.type] ?? 0})
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ---------------- "Layers" tab: the browsable tree ----------------
 
 function LayersPanel({
@@ -1130,6 +1229,8 @@ function LayersPanel({
 }) {
   return (
     <div>
+      <ForestCoverSection activeSelections={activeSelections} onToggle={onToggle} />
+
       <div className="mb-1 flex items-center justify-between px-0.5">
         <h3 className="text-[10px] font-bold uppercase tracking-wide text-[var(--sb-text-muted)]">
           Municipalities

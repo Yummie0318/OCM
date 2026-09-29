@@ -31,8 +31,8 @@ const COLOR_PRESETS: { label: string; value: string }[] = [
   { label: "Flagged", value: "#a855f7" },
 ];
 
-const HAIRLINE = "color-mix(in srgb, var(--sb-border) 70%, transparent)";
-const HAIRLINE_SOFT = "color-mix(in srgb, var(--sb-border) 45%, transparent)";
+export const HAIRLINE = "color-mix(in srgb, var(--sb-border) 70%, transparent)";
+export const HAIRLINE_SOFT = "color-mix(in srgb, var(--sb-border) 45%, transparent)";
 
 // Same input/button styling as the Add user form in UsersModal.tsx
 const btnBase = "border-0 p-0 transition-colors duration-100 disabled:cursor-not-allowed disabled:opacity-40";
@@ -55,7 +55,7 @@ function toSheetId(value: unknown): number | null {
   return null;
 }
 
-function hexToRgba(hex: string, alpha: number): string {
+export function hexToRgba(hex: string, alpha: number): string {
   const clean = hex.replace("#", "").trim();
   const full = clean.length === 3
     ? clean.split("").map((c) => c + c).join("")
@@ -68,7 +68,7 @@ function hexToRgba(hex: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-function Tooltip({
+export function Tooltip({
   label,
   children,
   position = "top",
@@ -848,7 +848,7 @@ function BulkSurveyNoControl({
   );
 }
 
-function Checkbox({
+export function Checkbox({
   checked,
   onChange,
   onClick,
@@ -894,7 +894,7 @@ function Checkbox({
 // color toolbar below (checkboxes on whole sheets, from the sheets list)
 // — same shape/behavior either way, just fed a different selected count
 // and a different apply-color callback.
-function ColorToolbar({
+export function ColorToolbar({
   selectedCount,
   onApplyColor,
   onDeselectAll,
@@ -1628,7 +1628,7 @@ function NoSearchResults({ query }: { query: string }) {
   );
 }
 
-function Th({ children, numeric }: { children: React.ReactNode; numeric?: boolean }) {
+export function Th({ children, numeric }: { children: React.ReactNode; numeric?: boolean }) {
   return (
     <th
       className={`sticky top-0 z-10 whitespace-nowrap px-2.5 py-[7px] font-semibold uppercase backdrop-blur ${
