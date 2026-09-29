@@ -7,7 +7,7 @@ import { uiFont } from "@/components/map/sidebarTheme";
 import { SidebarThemeProvider, useSidebarTheme } from "@/components/map/SidebarThemeContext";
 
 // Update this number whenever you commit a new version.
-const APP_VERSION = "0.40";
+const APP_VERSION = "0.41";
 
 // Remembers the lock across page refreshes (UI only; the server enforces it).
 const LOCK_STORAGE_KEY = "ocm_login_lock_until";

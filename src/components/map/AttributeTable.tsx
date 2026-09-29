@@ -1508,6 +1508,7 @@ export default function AttributeTable({
               onToggleColorSelect={toggleColorSelect}
               onToggleColorSelectAll={() => toggleColorSelectAll(expandedSheet.lots)}
               onEditLot={onEditLot ? (f) => setEditTarget({ type: "lot", feature: f }) : undefined}
+              canEditRecord={canEditRecord}
             />
           ) : (
             <SheetsTable
@@ -1919,6 +1920,10 @@ function LotsTable({
   const columns = showSheetNo ? ["Sheet No.", ...LOT_COLUMNS] : LOT_COLUMNS;
   const visibleIds = features.map((f) => String(f.id));
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => colorSelectedIds.has(id));
+    // Show the Actions column only if at least one visible lot is editable
+  // by this user (based on who encoded it).
+  const canEditAny =
+    !!onEditLot && features.some((f) => !canEditRecord || canEditRecord(f.properties.encodedBy));
 
   const rowRefs = useRef<Record<string, HTMLTableRowElement | null>>({});
 
@@ -1955,7 +1960,7 @@ function LotsTable({
               {h}
             </Th>
           ))}
-          {onEditLot && <Th>Actions</Th>}
+          {canEditAny && <Th>Actions</Th>}
         </tr>
       </thead>
       <tbody>
@@ -2056,7 +2061,7 @@ function LotsTable({
                   <span className="block max-w-[160px] cursor-help truncate">{f.properties.remarks}</span>
                 </Tooltip>
               </td>
-              {onEditLot && (
+              {canEditAny && (
                 <td className="px-2.5 py-[6px]" onClick={(e) => e.stopPropagation()}>
                   {(!canEditRecord || canEditRecord(f.properties.encodedBy)) && (
                     <Tooltip label="Edit lot">
