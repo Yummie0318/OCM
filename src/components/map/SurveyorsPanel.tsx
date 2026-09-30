@@ -22,6 +22,7 @@ import { Search, Plus, Pencil, Trash2, Check, Loader2, Ruler } from "lucide-reac
 import { useSidebarTheme } from "./SidebarThemeContext";
 import { toast } from "@/components/notifications/Toaster";
 import SubDialog from "./SubDialog";
+import ConfirmDialog from "./ConfirmDialog";
 
 interface SurveyorRow {
   id: number;
@@ -338,7 +339,6 @@ export default function SurveyorsPanel({
 
         {filtered.map((r) => {
           const editing = editingId === r.id;
-          const confirming = confirmDeleteId === r.id;
           const rowBusy = busyId === r.id;
           const inUse = (r.lot_count ?? 0) > 0;
 
@@ -447,34 +447,6 @@ export default function SurveyorsPanel({
                       )}
                     </div>
                   </div>
-
-                  {confirming && (
-                    <div
-                      className="mt-2.5 flex flex-wrap items-center justify-between gap-2 rounded-[9px] px-2.5 py-2"
-                      style={{ background: "rgba(239, 68, 68, 0.08)" }}
-                    >
-                      <span className="text-[12px] font-medium text-red-500">Delete {r.name}? This can&apos;t be undone.</span>
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setConfirmDeleteId(null)}
-                          disabled={rowBusy}
-                          className={`${btnBase} rounded-full bg-[var(--sb-hover)] px-3 py-[5px] text-[11.5px] font-semibold text-[var(--sb-text)] hover:opacity-80`}
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDelete(r)}
-                          disabled={rowBusy}
-                          className={`${btnBase} flex items-center gap-1.5 rounded-full bg-red-500 px-3 py-[5px] text-[11.5px] font-semibold text-white hover:opacity-90`}
-                        >
-                          {rowBusy && <Loader2 size={11} className="animate-spin" />}
-                          Delete
-                        </button>
-                      </div>
-                    </div>
-                  )}
                 </>
               )}
             </li>
@@ -495,6 +467,41 @@ export default function SurveyorsPanel({
         </div>
       )}
 
+      {/* Delete surveyor — confirmation dialog */}
+      {confirmDeleteId !== null &&
+        (() => {
+          const r = rows.find((x) => x.id === confirmDeleteId);
+          if (!r) return null;
+          return (
+            <ConfirmDialog
+              title="Delete surveyor?"
+              tone="danger"
+              icon={<Trash2 size={18} />}
+              confirmLabel="Delete"
+              busy={busyId === r.id}
+              onCancel={() => setConfirmDeleteId(null)}
+              onConfirm={() => handleDelete(r)}
+              subject={
+                <div className="flex items-center gap-3">
+                  <span
+                    className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full text-[11.5px] font-bold"
+                    style={{ background: "var(--sb-accent-bg)", color: "var(--sb-accent-text)" }}
+                  >
+                    {initials(r.name)}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[13px] font-semibold">{r.name}</div>
+                    <div className="truncate text-[11px] text-[var(--sb-text-faint)]">{r.position}</div>
+                  </div>
+                </div>
+              }
+            >
+              This surveyor will be <strong className="text-[var(--sb-text)]">permanently removed</strong> from the lot
+              form dropdown. This can&apos;t be undone.
+            </ConfirmDialog>
+          );
+        })()}
+        
       {/* Add surveyor — compact dialog over the list */}
       {showAdd && (
         <SubDialog

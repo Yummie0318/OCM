@@ -41,6 +41,7 @@ import { uiFont } from "./sidebarTheme";
 import { toast } from "@/components/notifications/Toaster";
 import SurveyorsPanel from "./SurveyorsPanel";
 import SubDialog from "./SubDialog";
+import ConfirmDialog from "./ConfirmDialog";
 
 type Role = "superadmin" | "admin" | "surveyor" | "user";
 
@@ -61,6 +62,7 @@ interface UserRow {
 type View =
   | { kind: "list" }
   | { kind: "form"; user: UserRow | null } // user === null -> create
+  | { kind: "confirm"; action: "deactivate" | "reactivate" | "reset"; user: UserRow }
   | { kind: "credentials"; username: string; password: string; reason: "created" | "reset" };
 
 const HAIRLINE = "color-mix(in srgb, var(--sb-border) 75%, transparent)";
@@ -224,8 +226,6 @@ export default function UsersModal({
   }, [users, search, roleFilter, statusFilter]);
 
   async function toggleActive(u: UserRow) {
-    const verb = u.is_active ? "Deactivate" : "Reactivate";
-    if (!window.confirm(`${verb} ${u.username}?${u.is_active ? " They will be blocked from signing in." : ""}`)) return;
     setBusyId(u.id);
     setListError(null);
     try {
@@ -248,11 +248,11 @@ export default function UsersModal({
       setListError(msg);
     } finally {
       setBusyId(null);
+      setView({ kind: "list" });
     }
   }
 
   async function resetPassword(u: UserRow) {
-    if (!window.confirm(`Reset the password for ${u.username}? Their current password will stop working.`)) return;
     setBusyId(u.id);
     setListError(null);
     try {
@@ -267,6 +267,7 @@ export default function UsersModal({
       const msg = err instanceof Error ? err.message : "Couldn't reset password.";
       toast.error("Couldn't reset password", { description: msg });
       setListError(msg);
+      setView({ kind: "list" });
     } finally {
       setBusyId(null);
     }
@@ -520,12 +521,12 @@ export default function UsersModal({
                                 <IconBtn label="Edit user" onClick={() => setView({ kind: "form", user: u })}>
                                   <Pencil size={13} />
                                 </IconBtn>
-                                <IconBtn label="Reset password" onClick={() => resetPassword(u)} disabled={isSelf}>
+                                <IconBtn label="Reset password" onClick={() => setView({ kind: "confirm", action: "reset", user: u })} disabled={isSelf}>
                                   <KeyRound size={13} />
                                 </IconBtn>
                                 <IconBtn
                                   label={u.is_active ? "Deactivate" : "Reactivate"}
-                                  onClick={() => toggleActive(u)}
+                                  onClick={() => setView({ kind: "confirm", action: u.is_active ? "deactivate" : "reactivate", user: u })}
                                   disabled={isSelf}
                                   danger={u.is_active}
                                 >
@@ -581,6 +582,55 @@ export default function UsersModal({
           </SubDialog>
         )}
 
+        {tab === "users" && view.kind === "confirm" && (
+          <ConfirmDialog
+            title={
+              view.action === "deactivate"
+                ? "Deactivate user?"
+                : view.action === "reactivate"
+                ? "Reactivate user?"
+                : "Reset password?"
+            }
+            tone={view.action === "deactivate" ? "danger" : "accent"}
+            icon={view.action === "reset" ? <KeyRound size={18} /> : <Power size={18} />}
+            confirmLabel={
+              view.action === "deactivate" ? "Deactivate" : view.action === "reactivate" ? "Reactivate" : "Reset password"
+            }
+            busy={busyId === view.user.id}
+            onCancel={() => setView({ kind: "list" })}
+            onConfirm={() => (view.action === "reset" ? resetPassword(view.user) : toggleActive(view.user))}
+            subject={
+              <div className="flex items-center gap-3">
+                <span
+                  className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full text-[11.5px] font-bold"
+                  style={{ background: "var(--sb-accent-bg)", color: "var(--sb-accent-text)" }}
+                >
+                  {view.user.username.slice(0, 2).toUpperCase()}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-[13px] font-semibold">{view.user.username}</div>
+                  <div className="truncate text-[11px] text-[var(--sb-text-faint)]">{view.user.email}</div>
+                </div>
+                <RoleBadge role={view.user.usertype} />
+              </div>
+            }
+          >
+            {view.action === "deactivate" && (
+              <>
+                This account will be <strong className="text-[var(--sb-text)]">blocked from signing in</strong>. You can
+                reactivate it at any time.
+              </>
+            )}
+            {view.action === "reactivate" && <>This account will be able to sign in again.</>}
+            {view.action === "reset" && (
+              <>
+                A new temporary password will be generated. The{" "}
+                <strong className="text-[var(--sb-text)]">current password stops working immediately</strong>.
+              </>
+            )}
+          </ConfirmDialog>
+        )}
+        
         {tab === "users" && view.kind === "credentials" && (
           <SubDialog
             title={view.reason === "created" ? "User created" : "Password reset"}
