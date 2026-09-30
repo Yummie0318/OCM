@@ -183,6 +183,7 @@ import {
   Download,
   Users,
   Trees,
+  Info,
 } from "lucide-react";
 import type { SelectionMeta, TreeNodeData, LotSearchResult } from "@/lib/geo";
 import { uiFont, ACCENT_PRESETS, type SidebarTheme } from "./sidebarTheme";
@@ -402,6 +403,134 @@ function Tooltip({
           document.body
         )}
     </span>
+  );
+}
+
+// ---------------- InfoPopover ----------------
+//
+// Click-to-open "i" button with a small floating card. Portaled to <body>
+// so it's never clipped by the sidebar's overflow, which also means it
+// loses the --sb-* CSS variables set on the sidebar root. To keep it
+// themed, it applies `vars` (and `theme.shadow`) from useSidebarTheme()
+// to itself. Accent color, light/dark mode and custom theme colors all
+// carry over. Closes on outside click, Escape, resize or scroll.
+function InfoPopover({
+  label,
+  title,
+  children,
+}: {
+  label: string;
+  title: string;
+  children: React.ReactNode;
+}) {
+  const { vars, theme } = useSidebarTheme();
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const popRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number; arrowLeft: number } | null>(null);
+
+  const WIDTH = 232;
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  function place() {
+    const el = btnRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const margin = 8;
+    const center = r.left + r.width / 2;
+    const left = Math.max(margin, Math.min(center - WIDTH / 2, window.innerWidth - WIDTH - margin));
+    setPos({ top: r.bottom + 9, left, arrowLeft: center - left });
+  }
+
+  useEffect(() => {
+    if (!open) return;
+    place();
+    function onDown(e: MouseEvent) {
+      const t = e.target as Node;
+      if (btnRef.current?.contains(t) || popRef.current?.contains(t)) return;
+      setOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    const close = () => setOpen(false);
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("resize", close);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [open]);
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        aria-label={label}
+        aria-expanded={open}
+        onClick={(e) => {
+          e.stopPropagation(); // don't expand/collapse the folder row
+          setOpen((v) => !v);
+        }}
+        className={`flex h-[18px] w-[18px] flex-shrink-0 items-center justify-center rounded-full border-0 bg-transparent p-0 transition-colors duration-100 hover:bg-[var(--sb-hover)] ${
+          open ? "text-[var(--sb-accent)]" : "text-[var(--sb-text-faint)] hover:text-[var(--sb-text)]"
+        }`}
+      >
+        <Info size={13} />
+      </button>
+      {mounted &&
+        open &&
+        pos &&
+        createPortal(
+          <div
+            ref={popRef}
+            role="dialog"
+            aria-label={title}
+            // React events bubble through portals to the React parent
+            // (the folder row), so stop clicks here from toggling it.
+            onClick={(e) => e.stopPropagation()}
+            className={`${uiFont.className} fixed z-[9999] rounded-[12px] bg-[var(--sb-bg-elevated)] p-3 text-[var(--sb-text)]`}
+            style={{
+              ...vars,
+              top: pos.top,
+              left: pos.left,
+              width: WIDTH,
+              boxShadow: theme.shadow,
+              border: `1px solid ${hairline}`,
+            }}
+          >
+            {/* Arrow pointing at the button */}
+            <span
+              className="absolute h-[9px] w-[9px] rotate-45 bg-[var(--sb-bg-elevated)]"
+              style={{
+                top: -5,
+                left: pos.arrowLeft - 4.5,
+                borderTop: `1px solid ${hairline}`,
+                borderLeft: `1px solid ${hairline}`,
+              }}
+            />
+            <div className="mb-1.5 flex items-center gap-1.5">
+              <span className="flex h-[18px] w-[18px] items-center justify-center rounded-full bg-[var(--sb-accent-bg)] text-[var(--sb-accent)]">
+                <Info size={11} />
+              </span>
+              <span className="text-[10px] font-bold uppercase tracking-wide text-[var(--sb-accent)]">
+                {title}
+              </span>
+            </div>
+            <div className="text-[11.5px] leading-snug text-[var(--sb-text)]">{children}</div>
+          </div>,
+          document.body
+        )}
+    </>
   );
 }
 
@@ -680,7 +809,7 @@ export default function Sidebar({
         </Tooltip>
 
         {canWrite && (
-          <Tooltip label="Create Shapefile" side="right">
+          <Tooltip label="Create Layer" side="right">
             <button type="button" onClick={onCreateShapefile} className={`mt-1.5 ${iconBtnClass("lg")}`}>
               <FilePlus2 size={16} />
             </button>
@@ -826,7 +955,7 @@ export default function Sidebar({
           style={{ background: theme.accent, color: theme.onAccent }}
         >
           <FilePlus2 size={14} />
-          Create Shapefile
+          Create Layer
         </button>
       )}
 
@@ -1171,6 +1300,11 @@ function ForestCoverSection({
         showCheckbox
         checked={allChecked}
         onCheckToggle={toggleAll}
+        extra={
+          <InfoPopover label="Forest cover data source" title="Data reference">
+            Forest cover data is generated from the NAMRIA Land Cover Map (LCM) 2025.
+          </InfoPopover>
+        }
       />
       {expanded && (
         <div className="ml-[25px]" style={{ borderLeft: `1px solid ${hairlineSoft}`, paddingLeft: 1 }}>
@@ -1293,6 +1427,7 @@ function FolderRow({
   showCheckbox = false,
   checked = false,
   onCheckToggle,
+  extra,
 }: {
   expanded: boolean;
   onToggle: () => void;
@@ -1305,6 +1440,8 @@ function FolderRow({
   showCheckbox?: boolean;
   checked?: boolean;
   onCheckToggle?: () => void;
+  /** Optional element rendered between the label and the count (e.g. an info button). */
+  extra?: React.ReactNode;
 }) {
   return (
     <div
@@ -1332,6 +1469,7 @@ function FolderRow({
       <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-[var(--sb-text)]">
         {label || "Untitled"}
       </span>
+      {extra}
       <span className="flex-shrink-0 tabular-nums text-[10.5px] text-[var(--sb-text-faint)]">({count ?? 0})</span>
     </div>
   );

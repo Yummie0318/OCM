@@ -566,6 +566,9 @@ export default function MapCanvas({
   const loadedRef = useRef(false);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const popupRef = useRef<any>(null);
+  // Id of the lot the currently open popup belongs to, so the popup can be
+  // closed when that lot's layer is removed from the map.
+  const popupFeatureIdRef = useRef<number | string | null>(null);
 
   // Keep the latest features/lotColors/basemapId in refs so the one-time
   // init effect's `map.on("load", ...)` callback (which only runs once, at
@@ -771,6 +774,12 @@ export default function MapCanvas({
             .setHTML(p.kind === "forest" ? buildForestPopupHtml(p) : buildPopupHtml(p))
             .addTo(map);
 
+          popupFeatureIdRef.current = feature.id ?? null;
+          // Forget the id once the popup is closed (X button, outside click, etc.)
+          popupRef.current.on("close", () => {
+            popupFeatureIdRef.current = null;
+          });
+
           // Clicking the polygon only opens this popup (and reports
           // onPolygonClick above) — it does NOT call onFeatureClick on its
           // own. Opening the Lot Detail Panel is still a deliberate second
@@ -909,6 +918,24 @@ export default function MapCanvas({
   useEffect(() => {
     setFeatures(features, lotColors, focusPoint);
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [features]);
+
+    // Close the click popup if the lot it describes is no longer on the map
+  // (e.g. its layer was removed in the Selected tab or unchecked in the tree).
+  useEffect(() => {
+    const popup = popupRef.current;
+    if (!popup) return;
+
+    const id = popupFeatureIdRef.current;
+    // No usable id to match against: close it rather than leave a stale popup.
+    const stillThere =
+      id != null && features.some((f) => String(f.id) === String(id));
+
+    if (!stillThere) {
+      popup.remove();
+      popupRef.current = null;
+      popupFeatureIdRef.current = null;
+    }
   }, [features]);
 
   // Redraw whenever colors change, independent of feature-set changes —
