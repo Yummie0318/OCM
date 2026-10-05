@@ -133,3 +133,18 @@ export function lonLatToPPCS(
   const [easting, northing] = proj4("EPSG:4326", zoneEpsg, [lon, lat]);
   return { northing, easting, zone };
 }
+/**
+ * Inverse of lonLatToPPCS, but with the zone given explicitly instead of
+ * inferred. Used when an admin edits a polygon vertex or changes the
+ * projection (zone) in the lot detail panel.
+ */
+export function ppcsToLonLat(
+  northing: number,
+  easting: number,
+  zone: PRS92Zone
+): [number, number] {
+  ensureDefs();
+  // proj4 expects / returns [x, y] = [easting, northing]
+  const [lon, lat] = proj4(ZONE_DEFS[zone].epsg, "EPSG:4326", [easting, northing]);
+  return [lon, lat];
+}

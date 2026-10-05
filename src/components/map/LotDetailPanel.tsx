@@ -1,10 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
-import { X, Eye, MapPin, ChevronDown, ChevronLeft } from "lucide-react";
+import { X, Eye, MapPin, ChevronDown, ChevronLeft, Pencil } from "lucide-react";
 import type { LotFeature } from "@/lib/geo";
 import { lonLatToPPCS } from "@/lib/coordTransform";
+import type { PRS92Zone } from "@/types";
 import ShapePreview from "@/components/ShapePreview";
+import LotGeometryEditModal from "@/components/map/LotGeometryEditModal";
+import SheetGeometryEditModal from "@/components/map/SheetGeometryEditModal";
+import { trackActivity } from "@/lib/trackActivity";
 import LotPreviewModal, { type CoordPoint } from "@/components/map/LotPreviewModal";
 import SheetPreviewModal from "@/components/map/SheetPreviewModal";
 import { useSidebarTheme } from "@/components/map/SidebarThemeContext";
@@ -47,6 +51,20 @@ interface Props {
    */
   onBackToSheet?: () => void;
   onClose: () => void;
+    /** True if the current user may edit this record (superadmin, or admin who encoded it). */
+  canEditRecord?: (encodedBy: string | null | undefined) => boolean;
+  /** Saves edited vertices + zone for one lot. Should throw on failure. Omit to hide editing entirely. */
+  onSaveGeometry?: (
+    lotId: string | number,
+    zone: PRS92Zone,
+    points: { northing: number; easting: number }[]
+  ) => Promise<void>;
+    /** Saves edited polygons for several lots on one sheet at once. Omit to hide sheet editing. */
+  onSaveSheetGeometry?: (
+    sheetId: number,
+    zone: PRS92Zone,
+    lots: { id: string | number; points: { northing: number; easting: number }[] }[]
+  ) => Promise<void>;
   /** Current panel width in px. Owned by the parent (see page.tsx). Ignored on mobile. */
   width: number;
   /** Whether the panel is currently being dragged wider/narrower. Ignored on mobile. */
@@ -86,7 +104,10 @@ export default function LotDetailPanel({
   onSelectLot,
   onBackToSheet,
   onClose,
+  canEditRecord,
+  onSaveGeometry,
   width,
+  onSaveSheetGeometry,
   isResizing,
   onStartResize,
   isMobile = false,
@@ -174,6 +195,57 @@ export default function LotDetailPanel({
   const sheetTotalArea = useMemo(() => {
     if (!activeSheetPreview) return 0;
     return activeSheetPreview.lots.reduce((sum, f) => sum + (Number(f.properties.areaSqm) || 0), 0);
+  }, [activeSheetPreview]);
+
+    // ---- Polygon editing (modal) ----
+  const canEdit =
+    !!activeFeature && !!onSaveGeometry && !!canEditRecord?.(activeFeature.properties.encodedBy);
+  const [editOpen, setEditOpen] = useState(false);
+
+  // Close the modal if a different lot is shown.
+  useEffect(() => {
+    setEditOpen(false);
+  }, [activeFeature?.id]);
+
+  // Zone the polygon currently lives in (inferred from its first vertex).
+  const initialZone = useMemo<PRS92Zone>(() => {
+    const first = activeFeature?.geometry.coordinates[0]?.[0];
+    return first ? lonLatToPPCS(first[0], first[1]).zone : 3;
+  }, [activeFeature]);
+
+    // ---- Whole-sheet polygon editing (modal) ----
+  const [sheetEditOpen, setSheetEditOpen] = useState(false);
+
+  useEffect(() => {
+    setSheetEditOpen(false);
+  }, [activeSheetPreview?.sheetNo]);
+
+  const sheetIdNum = (() => {
+    const raw = activeSheetPreview?.lots[0]?.properties.sheetId;
+    const n = Number(raw);
+    return raw != null && Number.isFinite(n) ? n : null;
+  })();
+
+  const canEditSheet =
+    sheetMode &&
+    !!activeSheetPreview &&
+    sheetIdNum != null &&
+    !!onSaveSheetGeometry &&
+    !!canEditRecord?.(activeSheetPreview.lots[0]?.properties.encodedBy);
+
+  const sheetEditLots = useMemo(
+    () =>
+      (activeSheetPreview?.lots ?? []).map((f) => ({
+        id: f.id,
+        label: f.properties.lotNo ?? "",
+        points: lotToPoints(f),
+      })),
+    [activeSheetPreview]
+  );
+
+  const sheetInitialZone = useMemo<PRS92Zone>(() => {
+    const first = activeSheetPreview?.lots[0]?.geometry.coordinates[0]?.[0];
+    return first ? lonLatToPPCS(first[0], first[1]).zone : 3;
   }, [activeSheetPreview]);
 
   if (!activeFeature && !activeSheetPreview) return null;
@@ -275,10 +347,27 @@ export default function LotDetailPanel({
                 <ActionButton
                   icon={<Eye size={12} />}
                   label="Preview & Print"
-                  onClick={() => setSheetPrintOpen(true)}
+                  onClick={() => {
+                    setSheetPrintOpen(true);
+                    if (sheetIdNum != null) {
+                      trackActivity({
+                        action: "preview",
+                        entityType: "lot_sheet",
+                        entityId: sheetIdNum,
+                        label: activeSheetPreview!.sheetNo,
+                      });
+                    }
+                  }}
                   accent={theme.accent}
                   primary
                 />
+                {canEditSheet && (
+                  <ActionButton
+                    icon={<Pencil size={12} />}
+                    label="Edit sheet"
+                    onClick={() => setSheetEditOpen(true)}
+                  />
+                )}
               </div>
             </div>
 
@@ -319,10 +408,26 @@ export default function LotDetailPanel({
                 <ActionButton
                   icon={<Eye size={12} />}
                   label="Preview"
-                  onClick={() => setPreviewOpen(true)}
+                  onClick={() => {
+                    setPreviewOpen(true);
+                    trackActivity({
+                      action: "preview",
+                      entityType: "lot",
+                      entityId: activeFeature!.id,
+                      label: String(p?.lotNo ?? "—"),
+                      extra: { lotNo: p?.lotNo ?? null, owner: p?.owner ?? "" },
+                    });
+                  }}
                   accent={theme.accent}
                   primary
                 />
+                {canEdit && (
+                  <ActionButton
+                    icon={<Pencil size={12} />}
+                    label="Edit"
+                    onClick={() => setEditOpen(true)}
+                  />
+                )}
               </div>
             </div>
 
@@ -341,7 +446,6 @@ export default function LotDetailPanel({
                 />
               </div>
             </div>
-
             {/* Inline coordinates table */}
             <div className="px-4 pb-4 pt-3.5">
               <SectionLabel>Coordinates ({points.length})</SectionLabel>
@@ -361,11 +465,32 @@ export default function LotDetailPanel({
         />
       )}
 
+            {!sheetMode && activeFeature && canEdit && onSaveGeometry && (
+        <LotGeometryEditModal
+          open={editOpen}
+          onClose={() => setEditOpen(false)}
+          lotLabel={activeFeature.properties.lotNo ?? ""}
+          points={points}
+          initialZone={initialZone}
+          onSave={(zone, pts) => onSaveGeometry(activeFeature.id, zone, pts)}
+        />
+      )}
+
       {sheetMode && activeSheetPreview && (
         <SheetPreviewModal
           open={sheetPrintOpen}
           onClose={() => setSheetPrintOpen(false)}
           sheet={activeSheetPreview}
+        />
+      )}
+      {sheetMode && activeSheetPreview && canEditSheet && onSaveSheetGeometry && sheetIdNum != null && (
+        <SheetGeometryEditModal
+          open={sheetEditOpen}
+          onClose={() => setSheetEditOpen(false)}
+          sheetLabel={activeSheetPreview.sheetNo}
+          lots={sheetEditLots}
+          initialZone={sheetInitialZone}
+          onSave={(zone, lots) => onSaveSheetGeometry(sheetIdNum, zone, lots)}
         />
       )}
     </div>

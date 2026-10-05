@@ -211,6 +211,7 @@ import UsersModal from "@/components/map/UsersModal";
 import ForestAttributeTable from "@/components/map/ForestAttributeTable";
 import { isForestFeature } from "@/lib/forest";
 import { toast } from "@/components/notifications/Toaster";
+import type { PRS92Zone } from "@/types";
 
 
 const SIDEBAR_MIN_WIDTH = 220;
@@ -734,6 +735,13 @@ function MapViewerPageInner() {
     }
   }, [tableFilterKey, activeSelections]);
 
+    // MapLibre returns tile-clipped / grid-rounded geometry for polygon clicks.
+  // Swap in the original feature from layerData so the detail panel (and
+  // polygon editing) always works on the real, full-precision coordinates.
+  function canonicalFeature(f: LotFeature): LotFeature {
+    return allFeatures.find((x) => String(x.id) === String(f.id)) ?? f;
+  }
+
   // Map click flow: a click on a polygon just opens the themed popup (see
   // MapCanvas); this is only called when the user then clicks that
   // popup's "View Lot Details" button, or selects a search result. It
@@ -742,7 +750,7 @@ function MapViewerPageInner() {
   // button, see viewSheetInPanel below, is the other).
   function openFeature(feature: LotFeature) {
     setSelectedId(feature.id);
-    setSelectedFeature(feature);
+    setSelectedFeature(canonicalFeature(feature));
     setSheetPreview(null);
     setDetailPanelOpen(true);
     if (isMobile) setMobileOpen(false);
@@ -773,7 +781,7 @@ function MapViewerPageInner() {
       return;
     }
     setSelectedId(feature.id);
-    setSelectedFeature(feature);
+    setSelectedFeature(canonicalFeature(feature));
     setSheetPreview(null);
     setFocusFeature({ feature, token: Date.now() });
   }
@@ -1099,7 +1107,103 @@ function MapViewerPageInner() {
     setSelectedFeature((f) => (f ? apply(f) : f));
     setSheetPreview((p) => (p ? { ...p, lots: p.lots.map(apply) } : p));
   }
+    // Admin / superadmin: save edited polygon vertices (PPCS Northing/Easting)
+  // + projection zone for ONE lot. PATCH /api/lots/[id]/geometry. The server
+  // converts to lon/lat, recomputes the area and re-checks the role.
+  // Throws on failure so LotDetailPanel can show the message inline.
+  async function handleSaveLotGeometry(
+    lotId: string | number,
+    zone: PRS92Zone,
+    points: { northing: number; easting: number }[]
+  ) {
+    const res = await fetch(`/api/lots/${lotId}/geometry`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ zone, points }),
+    });
 
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || "Failed to update polygon.");
+    }
+
+    setNotificationsRefreshKey(Date.now());
+
+    const data: { geometry: LotFeature["geometry"]; areaSqm: number } = await res.json();
+    const apply = (f: LotFeature): LotFeature =>
+      String(f.id) === String(lotId)
+        ? ({ ...f, geometry: data.geometry, properties: { ...f.properties, areaSqm: data.areaSqm } } as LotFeature)
+        : f;
+
+    // Zoom to the new location (it can move a lot if the zone changed).
+    const current = allFeatures.find((f) => String(f.id) === String(lotId));
+    if (current) setFocusFeature({ feature: apply(current), token: Date.now() });
+
+    setLayerData((d) => {
+      const next: typeof d = {};
+      for (const [key, feats] of Object.entries(d)) next[key] = feats.map(apply);
+      return next;
+    });
+    setSelectedFeature((f) => (f ? apply(f) : f));
+    setSheetPreview((p) => (p ? { ...p, lots: p.lots.map(apply) } : p));
+
+    toast.success("Polygon updated", {
+      description: `New area: ${data.areaSqm.toLocaleString(undefined, { maximumFractionDigits: 2 })} sq.m.`,
+    });
+  }
+  // Admin / superadmin: save edited polygons for SEVERAL lots on one sheet at
+  // once. PATCH /api/lot-sheets/[id]/geometry (single DB transaction).
+  async function handleSaveSheetGeometry(
+    sheetId: number,
+    zone: PRS92Zone,
+    lots: { id: string | number; points: { northing: number; easting: number }[] }[]
+  ) {
+    const res = await fetch(`/api/lot-sheets/${sheetId}/geometry`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        zone,
+        lots: lots.map((l) => ({ id: Number(l.id), points: l.points })),
+      }),
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || "Failed to update polygons.");
+    }
+
+    setNotificationsRefreshKey(Date.now());
+
+    const data: {
+      lots: { id: number; geometry: LotFeature["geometry"]; areaSqm: number }[];
+    } = await res.json();
+    const byId = new Map(data.lots.map((l) => [String(l.id), l]));
+
+    const apply = (f: LotFeature): LotFeature => {
+      const u = byId.get(String(f.id));
+      return u
+        ? ({ ...f, geometry: u.geometry, properties: { ...f.properties, areaSqm: u.areaSqm } } as LotFeature)
+        : f;
+    };
+
+    // Zoom to the first updated lot.
+    const firstId = data.lots[0]?.id;
+    const current = firstId != null ? allFeatures.find((f) => String(f.id) === String(firstId)) : undefined;
+    if (current) setFocusFeature({ feature: apply(current), token: Date.now() });
+
+    setLayerData((d) => {
+      const next: typeof d = {};
+      for (const [key, feats] of Object.entries(d)) next[key] = feats.map(apply);
+      return next;
+    });
+    setSelectedFeature((f) => (f ? apply(f) : f));
+    setSheetPreview((p) => (p ? { ...p, lots: p.lots.map(apply) } : p));
+
+    toast.success("Sheet polygons updated", {
+      description: `${data.lots.length} lot${data.lots.length === 1 ? "" : "s"} saved.`,
+    });
+  }
+  
     // Superadmin: set one survey number on every lot of the given sheets.
   // POST /api/lot-sheets/bulk-survey-no, then patch survey no. (and the
   // plan prefix derived from it) onto exactly the lots the server changed.
@@ -1232,6 +1336,49 @@ function MapViewerPageInner() {
     // function boundary, since the object could in principle be mutated
     // between the check and the closure running. `entityId` here is a
     // plain local, so TS knows it's `number` for the rest of this function.
+        // `changes` may arrive as an object or as a JSON string.
+    let after: Record<string, any> = {};
+    try {
+      const raw = typeof log.changes === "string" ? JSON.parse(log.changes) : log.changes;
+      after = (raw as any)?.after ?? {};
+    } catch {
+      after = {};
+    }
+
+    // Projection / report entries: re-apply the same filter on the map.
+    if (log.entity_type === "projection") {
+      const query = after.query;
+      if (!query || typeof query !== "object") return;
+      const filterKey = `filter:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
+      closeDetail();
+      setActiveSelections((prev) => ({
+        ...prev,
+        [filterKey]: { query, label: String(after.label ?? log.description) },
+      }));
+      setTableVisible(true);
+      if (isMobile) setMobileOpen(false);
+      return;
+    }
+
+    // Lot preview entries: project that single lot and open it.
+    if (log.entity_type === "lot") {
+      if (log.entity_id == null) return;
+      await handleSearchSelect({
+        id: Number(log.entity_id),
+        lotNo: after.lotNo ?? null,
+        owner: after.owner ?? "",
+        province: null,
+        municipality: null,
+        barangay: null,
+        surveyNo: null,
+        patentNo: null,
+        surveyor: null,
+        lng: null,
+        lat: null,
+      });
+      return;
+    }
+    
     const entityId = log.entity_id;
     if (entityId == null) return;
     const key = `sheet:${entityId}`;
@@ -1731,6 +1878,9 @@ function MapViewerPageInner() {
             onSelectLot={selectLotFromSheetPreview}
             onBackToSheet={backToSheetPreview}
             onClose={closeDetail}
+            canEditRecord={canEditRecord}
+            onSaveGeometry={isSuperAdmin || isAdmin ? handleSaveLotGeometry : undefined}
+            onSaveSheetGeometry={isSuperAdmin || isAdmin ? handleSaveSheetGeometry : undefined}
             width={detailPanelWidth}
             isResizing={isDetailPanelResizing}
             onStartResize={startDetailPanelResize}

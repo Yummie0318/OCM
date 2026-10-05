@@ -783,9 +783,7 @@ export default function Sidebar({
                 <div className="truncate text-[10.5px] text-[var(--sb-text-faint)]">{userEmail}</div>
               </div>
             </button>
-            {canWrite && (
-              <NotificationBell onSelectLog={onActivityLogSelect} refreshKey={notificationsRefreshKey} />
-            )}
+            <NotificationBell onSelectLog={onActivityLogSelect} refreshKey={notificationsRefreshKey} />
           </div>
         )}
       </div>
@@ -888,11 +886,9 @@ export default function Sidebar({
 
         {/* Notification bell — sits just above the account footer, next
             to where the user's profile lives. */}
-        {canWrite && (
-          <div className="mt-1.5">
-            <NotificationBell compact onSelectLog={onActivityLogSelect} refreshKey={notificationsRefreshKey} />
-          </div>
-        )}
+        <div className="mt-1.5">
+          <NotificationBell compact onSelectLog={onActivityLogSelect} refreshKey={notificationsRefreshKey} />
+        </div>
 
         {AccountFooter({ compact: true })}
         <style>{`@keyframes sidebar-pulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }`}</style>

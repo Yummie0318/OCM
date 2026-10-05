@@ -161,13 +161,14 @@ import { useSidebarTheme } from "@/components/map/SidebarThemeContext";
 
 export interface ActivityLogRow {
   id: number;
-  action: "create" | "update" | "delete";
+  action: "create" | "update" | "delete" | "project" | "preview" | "report";
   entity_type: string;
   entity_id: number | null;
   description: string;
   created_at: string;
   user_id: number | null;
   username: string | null;
+  changes?: { after?: Record<string, unknown> } | string | null;
 }
 
 // Ideal panel width; clamped against the sidebar's own bounds (see
@@ -217,6 +218,9 @@ const actionColorHex: Record<ActivityLogRow["action"], string> = {
   create: "#16a34a",
   update: "#2563eb",
   delete: "#dc2626",
+  project: "#7c3aed",
+  preview: "#0891b2",
+  report: "#d97706",
 };
 
 async function fetchTodayLogs(): Promise<ActivityLogRow[]> {
@@ -322,6 +326,16 @@ export default function NotificationBell({ compact = false, onSelectLog, refresh
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshKey]);
+    // Refresh immediately when something elsewhere in the app logs an event
+  // (projection, preview, report) via trackActivity().
+  useEffect(() => {
+    function onLogged() {
+      refresh();
+    }
+    window.addEventListener("activity-logged", onLogged);
+    return () => window.removeEventListener("activity-logged", onLogged);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Computes where the panel should sit. Two modes:
   //  - "sheet": narrow viewport -> full-width bottom sheet, no anchoring math.
@@ -579,12 +593,13 @@ export default function NotificationBell({ compact = false, onSelectLog, refresh
                     // future log type that isn't record-specific. Those
                     // render as plain (non-interactive) rows instead of a
                     // dead-end button.
-                    const clickable = Boolean(onSelectLog) && log.entity_id != null;
+                    const clickable =
+                      Boolean(onSelectLog) && (log.entity_id != null || log.entity_type === "projection");
                     const content = (
                       <>
                         <span
                           className="mt-1.5 h-[7px] w-[7px] flex-shrink-0 rounded-full"
-                          style={{ background: actionColorHex[log.action] }}
+                          style={{ background: actionColorHex[log.action] ?? theme.textFaint }}
                         />
                         <div className="min-w-0 flex-1">
                           <p className="text-[12.5px] leading-snug" style={{ color: theme.text }}>

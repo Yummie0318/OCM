@@ -164,6 +164,7 @@ import type { TreeNodeData, SelectionMeta } from "@/lib/geo";
 import { useSidebarTheme } from "./SidebarThemeContext";
 import { uiFont } from "./sidebarTheme";
 import { toast } from "@/components/notifications/Toaster";
+import { trackActivity } from "@/lib/trackActivity";
 
 // FacetKey: the six underlying, independently-fetched/filtered facets.
 // Unchanged in count/shape from before this pass -- only how they're
@@ -513,6 +514,7 @@ export default function ProjectionModal({
     const { query, label } = buildFacetQuery();
     const key = `filter:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
     onApply([{ key, meta: { query, label } }]);
+    trackActivity({ action: "project", entityType: "projection", label, extra: { query } });
   }
 
   function handleGenerateReport() {
@@ -539,6 +541,7 @@ export default function ProjectionModal({
     if (win) {
       win.opener = null;
       toast.success("Report opened", { description: `Generating report for ${label} in a new tab.` });
+      trackActivity({ action: "report", entityType: "projection", label, extra: { query } });
     } else {
       toast.error("Couldn't open report", {
         description: "Your browser blocked the new tab. Allow pop-ups for this site and try again.",

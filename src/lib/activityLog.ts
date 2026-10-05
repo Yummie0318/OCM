@@ -1,7 +1,7 @@
 import type { PoolClient } from "pg";
 import { getPool } from "@/lib/db";
 
-type ActivityAction = "create" | "update" | "delete";
+export type ActivityAction = "create" | "update" | "delete" | "project" | "preview" | "report";
 
 interface LogActivityInput {
   userId: number | null;

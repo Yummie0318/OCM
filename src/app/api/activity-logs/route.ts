@@ -27,7 +27,7 @@ function parsePositiveInt(value: string | null): number | null {
   return Number.isSafeInteger(n) && n > 0 ? n : null;
 }
 
-const VALID_ACTIONS = ["create", "update", "delete"];
+const VALID_ACTIONS = ["create", "update", "delete", "project", "preview", "report"];
 
 export async function GET(request: Request) {
   const cookieStore = await cookies();
@@ -38,6 +38,10 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Not authenticated." }, { status: 401 });
   }
 
+    // Only superadmins see everyone's activity. Everyone else is limited to
+  // their own rows, enforced here on the server (never trust the client).
+  const roleRes = await getPool().query(`SELECT usertype FROM users WHERE id = $1`, [session.userId]);
+  const isSuperAdmin = roleRes.rows[0]?.usertype === "superadmin";
   const { searchParams } = new URL(request.url);
   const limitRaw = searchParams.get("limit");
   const entityType = searchParams.get("entityType");
@@ -99,7 +103,12 @@ export async function GET(request: Request) {
   }
 
   if (entityType) conditions.push(`al.entity_type = ${addParam(entityType)}`);
-  if (userId != null) conditions.push(`al.user_id = ${addParam(userId)}`);
+  if (!isSuperAdmin) {
+    // Non-superadmins: always their own rows. A ?userId= param is ignored.
+    conditions.push(`al.user_id = ${addParam(session.userId)}`);
+  } else if (userId != null) {
+    conditions.push(`al.user_id = ${addParam(userId)}`);
+  }
   if (action) conditions.push(`al.action = ${addParam(action)}`);
   if (before) conditions.push(`al.created_at < ${addParam(before)}`);
   if (since) conditions.push(`al.created_at >= ${addParam(since)}`);
