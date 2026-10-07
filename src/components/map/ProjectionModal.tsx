@@ -226,7 +226,7 @@ const TABS: TabDef[] = [
     id: "years",
     label: "Year",
     icon: CalendarDays,
-    facets: [{ key: "years", queryParam: "years", sectionLabel: "Year", icon: CalendarDays }],
+    facets: [{ key: "years", queryParam: "years", sectionLabel: "Year Approved", icon: CalendarDays }],
   },
   {
     id: "classAndType",
@@ -502,7 +502,7 @@ export default function ProjectionModal({
     if (selected.municipalities.size > 0)
       query.municipality_ids = Array.from(selected.municipalities.keys()).map(Number);
     if (selected.barangays.size > 0) query.barangay_ids = Array.from(selected.barangays.keys()).map(Number);
-    if (selected.years.size > 0) query.years = Array.from(selected.years.keys()).map(Number);
+    if (selected.years.size > 0) query.years = Array.from(selected.years.keys()).join(",");
     if (selected.classifications.size > 0)
       query.classifications = Array.from(selected.classifications.keys()).join(",");
     if (selected.prefixes.size > 0) query.prefixes = Array.from(selected.prefixes.keys()).join(",");

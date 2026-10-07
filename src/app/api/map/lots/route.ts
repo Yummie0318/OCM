@@ -190,6 +190,26 @@ function parsePositiveIntList(value: string | null): number[] | null {
   return out;
 }
 
+// Year facet values: 4-digit years plus the sentinel "none" meaning
+// "lots with no date approved".
+function parseYearList(value: string | null): { years: number[]; includeNone: boolean } | null {
+  if (value == null || value.trim() === "") return { years: [], includeNone: false };
+  const years: number[] = [];
+  let includeNone = false;
+  for (const part of value.split(",")) {
+    const t = part.trim().toLowerCase();
+    if (t === "") continue;
+    if (t === "none") {
+      includeNone = true;
+      continue;
+    }
+    const n = parsePositiveInt(t);
+    if (n == null) return null;
+    years.push(n);
+  }
+  return { years, includeNone };
+}
+
 // Parses a comma-separated list of classification codes for the
 // `classifications` facet param. Case-insensitive on input; any token
 // outside RFPA/FPA returns null so the caller can 400 instead of silently
@@ -248,7 +268,7 @@ export async function GET(request: Request) {
   const cenroIds = parsePositiveIntList(cenroIdsRaw);
   const municipalityIds = parsePositiveIntList(municipalityIdsRaw);
   const barangayIds = parsePositiveIntList(barangayIdsRaw);
-  const years = parsePositiveIntList(yearsRaw);
+  const yearsParsed = parseYearList(yearsRaw);
   const classifications = parseClassificationList(classificationsRaw);
   const prefixes = parsePrefixList(prefixesRaw);
 
@@ -256,7 +276,7 @@ export async function GET(request: Request) {
     cenroIds == null ||
     municipalityIds == null ||
     barangayIds == null ||
-    years == null ||
+    yearsParsed == null ||
     classifications == null ||
     prefixes == null
   ) {
@@ -271,11 +291,15 @@ export async function GET(request: Request) {
     );
   }
 
+  const years = yearsParsed.years;
+  const includeNoApproved = yearsParsed.includeNone;
+
   const hasFacetFilter =
     cenroIds.length > 0 ||
     municipalityIds.length > 0 ||
     barangayIds.length > 0 ||
     years.length > 0 ||
+    includeNoApproved ||
     classifications.length > 0 ||
     prefixes.length > 0;
 
@@ -301,8 +325,13 @@ export async function GET(request: Request) {
     if (barangayIds.length > 0) {
       conditions.push(`l.barangay_id = ANY(${addParam(barangayIds)})`);
     }
-    if (years.length > 0) {
-      conditions.push(`EXTRACT(YEAR FROM l.date_surveyed) = ANY(${addParam(years)})`);
+    if (years.length > 0 || includeNoApproved) {
+      const parts: string[] = [];
+      if (years.length > 0) {
+        parts.push(`EXTRACT(YEAR FROM l.date_approved) = ANY(${addParam(years)})`);
+      }
+      if (includeNoApproved) parts.push(`l.date_approved IS NULL`);
+      conditions.push(`(${parts.join(" OR ")})`);
     }
     if (classifications.length > 0) {
       // Municipalities with no rule at either level return NULL from
@@ -333,8 +362,8 @@ export async function GET(request: Request) {
         return NextResponse.json({ error: `${name} must be a positive integer.` }, { status: 400 });
       }
     }
-    if (yearRaw != null && !/^\d{4}$/.test(yearRaw)) {
-      return NextResponse.json({ error: "year must be a 4-digit year." }, { status: 400 });
+    if (yearRaw != null && yearRaw !== "none" && !/^\d{4}$/.test(yearRaw)) {
+      return NextResponse.json({ error: "year must be a 4-digit year or 'none'." }, { status: 400 });
     }
 
     const id = parsePositiveInt(idRaw);
@@ -343,15 +372,17 @@ export async function GET(request: Request) {
     const municipalityId = parsePositiveInt(municipalityIdRaw);
     const cenroId = parsePositiveInt(cenroIdRaw);
     const surveyorId = parsePositiveInt(surveyorIdRaw);
-    const year = yearRaw != null ? Number(yearRaw) : null;
+    const yearNone = yearRaw === "none";
+    const year = yearRaw != null && !yearNone ? Number(yearRaw) : null;
 
     if (id != null) {
       conditions.push(`l.id = ${addParam(id)}`);
     } else if (sheetId != null) {
       conditions.push(`l.lot_sheet_id = ${addParam(sheetId)}`);
-    } else if (barangayId != null && year != null) {
+    } else if (barangayId != null && (year != null || yearNone)) {
       conditions.push(`l.barangay_id = ${addParam(barangayId)}`);
-      conditions.push(`EXTRACT(YEAR FROM l.date_surveyed) = ${addParam(year)}`);
+      if (yearNone) conditions.push(`l.date_approved IS NULL`);
+      else conditions.push(`EXTRACT(YEAR FROM l.date_approved) = ${addParam(year)}`);
     } else if (barangayId != null) {
       conditions.push(`l.barangay_id = ${addParam(barangayId)}`);
     } else if (municipalityId != null) {

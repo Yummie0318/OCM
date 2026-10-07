@@ -163,6 +163,25 @@ function parsePrefixList(raw: string | null): string[] | null {
   return out;
 }
 
+// Year facet values: 4-digit years plus the sentinel "none" meaning
+// "lots with no date approved". Same contract as lots/route.ts.
+function parseYearList(raw: string | null): { years: number[]; includeNone: boolean } | null {
+  if (raw == null || raw.trim() === "") return { years: [], includeNone: false };
+  const years: number[] = [];
+  let includeNone = false;
+  for (const part of raw.split(",")) {
+    const t = part.trim().toLowerCase();
+    if (t === "") continue;
+    if (t === "none") {
+      includeNone = true;
+      continue;
+    }
+    if (!/^\d{4}$/.test(t)) return null;
+    years.push(Number(t));
+  }
+  return { years, includeNone };
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const level = searchParams.get("level");
@@ -228,14 +247,25 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "barangay_id is required" }, { status: 400 });
     }
     const { rows } = await pool.query(
-      `SELECT EXTRACT(YEAR FROM date_surveyed)::int AS year, COUNT(*)::int AS count
+      `SELECT EXTRACT(YEAR FROM date_approved)::int AS year, COUNT(*)::int AS count
        FROM lots
-       WHERE barangay_id = $1 AND date_surveyed IS NOT NULL
+       WHERE barangay_id = $1 AND date_approved IS NOT NULL
        GROUP BY year
        ORDER BY year DESC`,
       [barangayId]
     );
     const nodes: TreeNode[] = rows.map((r) => ({ id: r.year, label: String(r.year), count: r.count }));
+
+    // Final row: lots with no approved date. Only shown if there are any.
+    const { rows: noneRows } = await pool.query(
+      `SELECT COUNT(*)::int AS count
+       FROM lots
+       WHERE barangay_id = $1 AND date_approved IS NULL`,
+      [barangayId]
+    );
+    if (noneRows[0]?.count > 0) {
+      nodes.push({ id: "none", label: "No date approved", count: noneRows[0].count });
+    }
     return NextResponse.json(nodes);
   }
 
@@ -251,7 +281,7 @@ export async function GET(request: Request) {
     const cenroIds = parseIntList(searchParams.get("cenro_ids"));
     const municipalityIds = parseIntList(searchParams.get("municipality_ids"));
     const barangayIds = parseIntList(searchParams.get("barangay_ids"));
-    const years = parseIntList(searchParams.get("years"));
+    const yearsParsed = parseYearList(searchParams.get("years"));
     const classifications = parseClassificationList(searchParams.get("classifications"));
     const prefixes = parsePrefixList(searchParams.get("prefixes"));
 
@@ -259,20 +289,24 @@ export async function GET(request: Request) {
       cenroIds == null ||
       municipalityIds == null ||
       barangayIds == null ||
-      years == null ||
+      yearsParsed == null ||
       classifications == null ||
       prefixes == null
     ) {
       return NextResponse.json(
         {
           error:
-            "cenro_ids, municipality_ids, barangay_ids, and years must be comma-separated integers; " +
+            "cenro_ids, municipality_ids, and barangay_ids must be comma-separated integers; " +
+            "years must be comma-separated 4-digit years (or \"none\"); " +
             "classifications must be a comma-separated list of RFPA and/or FPA; " +
             "prefixes must be a comma-separated list of 2-6 letter codes (e.g. CSD,CCS).",
         },
         { status: 400 }
       );
     }
+
+    const years = yearsParsed.years;
+    const includeNoApproved = yearsParsed.includeNone;
 
     const conditions: string[] = [];
     const params: unknown[] = [];
@@ -292,8 +326,13 @@ export async function GET(request: Request) {
     if (target !== "barangays" && barangayIds.length > 0) {
       conditions.push(`l.barangay_id = ANY(${addParam(barangayIds)})`);
     }
-    if (target !== "years" && years.length > 0) {
-      conditions.push(`EXTRACT(YEAR FROM l.date_surveyed) = ANY(${addParam(years)})`);
+    if (target !== "years" && (years.length > 0 || includeNoApproved)) {
+      const parts: string[] = [];
+      if (years.length > 0) {
+        parts.push(`EXTRACT(YEAR FROM l.date_approved) = ANY(${addParam(years)})`);
+      }
+      if (includeNoApproved) parts.push(`l.date_approved IS NULL`);
+      conditions.push(`(${parts.join(" OR ")})`);
     }
     if (target !== "classifications" && classifications.length > 0) {
       conditions.push(`(${CLASSIFICATION_CASE_SQL}) = ANY(${addParam(classifications)})`);
@@ -336,17 +375,19 @@ export async function GET(request: Request) {
         ORDER BY b.name
       `;
     } else if (target === "years") {
-      conditions.push("l.date_surveyed IS NOT NULL");
+      // No "IS NOT NULL" guard anymore: NULL date_approved rows are the
+      // "No date approved" entry. `conditions` can be empty here, hence
+      // the TRUE fallback.
       sql = `
         SELECT
-          EXTRACT(YEAR FROM l.date_surveyed)::int AS id,
-          EXTRACT(YEAR FROM l.date_surveyed)::text AS label,
+          COALESCE(EXTRACT(YEAR FROM l.date_approved)::int::text, 'none') AS id,
+          COALESCE(EXTRACT(YEAR FROM l.date_approved)::int::text, 'No date approved') AS label,
           COUNT(DISTINCT l.id)::int AS count
         FROM lots l
         JOIN municipalities m ON m.id = l.municipality_id
-        WHERE ${conditions.join(" AND ")}
+        WHERE ${conditions.length > 0 ? conditions.join(" AND ") : "TRUE"}
         GROUP BY 1, 2
-        ORDER BY 1 DESC
+        ORDER BY MAX(EXTRACT(YEAR FROM l.date_approved)) DESC NULLS LAST
       `;
     } else if (target === "prefixes") {
       // prefixes — not a real table, so id/label are the derived letter
