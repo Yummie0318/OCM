@@ -56,6 +56,7 @@ const COLUMNS = [
   "OWNER",
   "BARANGAY",
   "DATE SURVEYED",
+  "DATE APPROVED",
   "SURVEYOR",
   "AREA(SQM)",
   "PATENT NO.",
@@ -299,7 +300,7 @@ function LotReportContent() {
                 its full column widths and the user swipes sideways, instead
                 of every cell getting crushed to fit the viewport. */}
             <div className="overflow-x-auto rounded-[8px] border border-[var(--sb-border)] bg-[var(--sb-bg-elevated)] print:overflow-visible print:rounded-none print:border-0">
-              <table className="w-full min-w-[880px] border-collapse text-[10px] sm:text-[11px] print:min-w-0">
+              <table className="w-full min-w-[980px] border-collapse text-[10px] sm:text-[11px] print:min-w-0">
                 <thead>
                   <tr>
                     {COLUMNS.map((h) => (
@@ -314,7 +315,7 @@ function LotReportContent() {
                     <SheetRows key={String(sheet.sheetId ?? sheet.sheetNo)} sheet={sheet} />
                   ))}
                   <tr className="bg-[var(--sb-accent-bg)] font-bold text-[var(--sb-accent-text)] print:bg-white print:text-black">
-                    <td colSpan={8} className={`${CELL} text-right print:border-t-2`}>
+                    <td colSpan={9} className={`${CELL} text-right print:border-t-2`}>
                       OVERALL TOTAL (SQM)
                     </td>
                     <td className={`${CELL} text-right tabular-nums print:border-t-2`}>{formatArea(cenroGroup.totalArea)}</td>
@@ -420,6 +421,9 @@ function SheetRows({
           <td className={CELL}>{lot.properties.owner}</td>
           <td className={CELL}>{lot.properties.barangay}</td>
           <td className={`${CELL} whitespace-nowrap`}>{formatDate(lot.properties.dateSurveyed)}</td>
+          <td className={`${CELL} whitespace-nowrap`}>
+            {formatDate(lot.properties.dateApproved) || "—"}
+          </td>
           <td className={CELL}>{lot.properties.surveyor}</td>
           <td className={`${CELL} text-right tabular-nums`}>
             {lot.properties.areaSqm != null ? formatArea(Number(lot.properties.areaSqm)) : "—"}
@@ -429,7 +433,7 @@ function SheetRows({
         </tr>
       ))}
       <tr className="bg-[var(--sb-hover)] font-semibold text-[var(--sb-text)] print:bg-white print:font-bold">
-        <td colSpan={5} className={`${CELL} text-right`}>
+        <td colSpan={6} className={`${CELL} text-right`}>
           TOTAL:
         </td>
         <td className={`${CELL} text-right tabular-nums`}>{formatArea(sheet.totalArea)}</td>

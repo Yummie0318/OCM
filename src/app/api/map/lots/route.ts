@@ -401,7 +401,9 @@ export async function GET(request: Request) {
   const sql = `
     SELECT
       l.id, l.lot_no, l.owner_given_name, l.owner_surname,
-      l.survey_no, l.date_surveyed, l.area_sqm, l.patent_no, l.remarks,
+      l.survey_no, to_char(l.date_surveyed, 'YYYY-MM-DD') AS date_surveyed,
+      to_char(l.date_approved, 'YYYY-MM-DD') AS date_approved,
+      l.area_sqm, l.patent_no, l.remarks,
       ls.id AS sheet_id, ls.plan_url, ls.documents_url, ls.survey_class, ls.sheet_no,
       ST_AsGeoJSON(l.geom) AS geometry_json,
       COALESCE(cp.province_name, p.name) AS province_name,
@@ -462,6 +464,7 @@ export async function GET(request: Request) {
       barangay: row.barangay_name,
       surveyNo: row.survey_no,
       dateSurveyed: row.date_surveyed,
+      dateApproved: row.date_approved,
       surveyor: row.surveyor_name,
       areaSqm: row.area_sqm,
       sheetId: row.sheet_id,

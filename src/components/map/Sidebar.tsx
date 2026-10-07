@@ -184,6 +184,11 @@ import {
   Users,
   Trees,
   Info,
+  Database,
+  BarChart3,
+  Landmark,      // <-- ADD
+  TreePine,      // <-- ADD
+  type LucideIcon, // <-- ADD
 } from "lucide-react";
 import type { SelectionMeta, TreeNodeData, LotSearchResult } from "@/lib/geo";
 import { uiFont, ACCENT_PRESETS, type SidebarTheme } from "./sidebarTheme";
@@ -191,7 +196,7 @@ import { useSidebarTheme } from "./SidebarThemeContext";
 import SearchBar from "./SearchBar";
 import NotificationBell, { type ActivityLogRow } from "@/components/NotificationBell";
 import ProjectionModal, { type ProjectionResult } from "./ProjectionModal";
-import { FOREST_TYPES } from "@/lib/forest";
+import { FOREST_TYPES, LAND_CLASS_TYPES } from "@/lib/forest";
 
 interface SidebarProps {
   activeSelections: Record<string, SelectionMeta>;
@@ -219,6 +224,10 @@ onCreateShapefile: () => void;
    * "Sidebar reports, page decides" pattern as onViewLayer.
    */
   onDownloadLayer?: (key: string) => void;
+    /** layer key -> border hex color (owned by the map page). */
+  layerBorderColors?: Record<string, string>;
+  /** Set (hex) or clear (null) the polygon border color for a layer. */
+  onSetLayerBorderColor?: (key: string, color: string | null) => void;
   /** Key of the selection currently filtering the attribute table (for row highlight). */
   activeTableKey?: string | null;
   /**
@@ -417,10 +426,14 @@ function Tooltip({
 function InfoPopover({
   label,
   title,
+  width = 232,
+  icon: Icon = Info,
   children,
 }: {
   label: string;
   title: string;
+  width?: number;
+  icon?: React.ComponentType<{ size?: number }>;
   children: React.ReactNode;
 }) {
   const { vars, theme } = useSidebarTheme();
@@ -430,7 +443,7 @@ function InfoPopover({
   const [mounted, setMounted] = useState(false);
   const [pos, setPos] = useState<{ top: number; left: number; arrowLeft: number } | null>(null);
 
-  const WIDTH = 232;
+  const WIDTH = width;
 
   useEffect(() => {
     setMounted(true);
@@ -485,7 +498,7 @@ function InfoPopover({
           open ? "text-[var(--sb-accent)]" : "text-[var(--sb-text-faint)] hover:text-[var(--sb-text)]"
         }`}
       >
-        <Info size={13} />
+        <Icon size={13} />
       </button>
       {mounted &&
         open &&
@@ -520,13 +533,13 @@ function InfoPopover({
             />
             <div className="mb-1.5 flex items-center gap-1.5">
               <span className="flex h-[18px] w-[18px] items-center justify-center rounded-full bg-[var(--sb-accent-bg)] text-[var(--sb-accent)]">
-                <Info size={11} />
+                <Icon size={11} />
               </span>
               <span className="text-[10px] font-bold uppercase tracking-wide text-[var(--sb-accent)]">
                 {title}
               </span>
             </div>
-            <div className="text-[11.5px] leading-snug text-[var(--sb-text)]">{children}</div>
+            <div className="max-h-[70vh] overflow-y-auto text-[11.5px] leading-snug text-[var(--sb-text)]">{children}</div>
           </div>,
           document.body
         )}
@@ -551,6 +564,8 @@ export default function Sidebar({
   onCreateShapefile,
   onViewLayer,
   onDownloadLayer,
+  layerBorderColors,
+  onSetLayerBorderColor,
   activeTableKey = null,
   municipalitiesRefreshKey,
   onActivityLogSelect,
@@ -998,6 +1013,8 @@ export default function Sidebar({
             onBrowse={() => setActiveTab("layers")}
             onViewLayer={onViewLayer}
             onDownloadLayer={onDownloadLayer}
+            layerBorderColors={layerBorderColors}
+            onSetLayerBorderColor={onSetLayerBorderColor}
             activeTableKey={activeTableKey}
           />
         )}
@@ -1081,6 +1098,40 @@ function TabButton({
 // (`year:<barangayId>:<yearId>`) so each kind of entry reads differently
 // at a glance.
 
+// Native color input styled as a small outlined swatch. Shows the current
+// border color; a tiny X appears once a color is set to reset it.
+// Native color input styled as a small outlined swatch. Shows the current
+// border color.
+// Native color input styled as a small outlined swatch. Shows the current
+// border color.
+// Native color input styled as a small outlined swatch. Shows the current
+// border color. Uses <span> (not <label>) so global label styles in
+// globals.css can't add margins and misalign it with the other icons.
+function BorderColorControl({
+  value,
+  onChange,
+}: {
+  value?: string;
+  onChange: (color: string | null) => void;
+}) {
+  return (
+    <Tooltip label="Border color" side="top">
+      <span className="relative m-0 flex h-[22px] w-[22px] flex-shrink-0 cursor-pointer items-center justify-center rounded-[7px] p-0 text-[var(--sb-accent)] transition-colors duration-100 hover:bg-[var(--sb-accent)]/15">
+        <span
+          className="block h-[12px] w-[12px] rounded-[3px] border-[1.5px] border-solid"
+          style={{ borderColor: value ?? "currentColor" }}
+        />
+        <input
+          type="color"
+          value={value ?? "#2563eb"}
+          onChange={(e) => onChange(e.target.value)}
+          className="absolute inset-0 m-0 h-full w-full cursor-pointer border-0 p-0 opacity-0"
+        />
+      </span>
+    </Tooltip>
+  );
+}
+
 function SelectedPanel({
   activeEntries,
   onToggle,
@@ -1088,6 +1139,8 @@ function SelectedPanel({
   onBrowse,
   onViewLayer,
   onDownloadLayer,
+  layerBorderColors,
+  onSetLayerBorderColor,
   activeTableKey,
 }: {
   activeEntries: [string, SelectionMeta][];
@@ -1096,6 +1149,10 @@ function SelectedPanel({
   onBrowse: () => void;
   onViewLayer?: (key: string) => void;
   onDownloadLayer?: (key: string) => void;
+  /** layer key -> border hex color (owned by the map page). */
+  layerBorderColors?: Record<string, string>;
+  /** Set (hex) or clear (null) the polygon border color for a layer. */
+  onSetLayerBorderColor?: (key: string, color: string | null) => void;
   activeTableKey?: string | null;
 }) {
   if (activeEntries.length === 0) {
@@ -1182,6 +1239,12 @@ function SelectedPanel({
                 </span>
               </Tooltip>
 
+              <div className="ml-auto mt-0.5 flex flex-shrink-0 items-center gap-0.5">
+              <BorderColorControl
+                value={layerBorderColors?.[key]}
+                onChange={(c) => onSetLayerBorderColor?.(key, c)}
+              />
+
               {/* Download this layer as KML/Shapefile/GeoJSON — opens
                   DownloadLayerModal (owned by the map page, since it's
                   the one holding the actual feature geometry for this
@@ -1190,7 +1253,7 @@ function SelectedPanel({
                 <button
                   type="button"
                   onClick={() => onDownloadLayer?.(key)}
-                  className="mt-0.5 flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded-[7px] border-0 bg-transparent p-0 text-[var(--sb-accent)] transition-colors duration-100 hover:bg-[var(--sb-accent)]/15"
+                  className="flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded-[7px] border-0 bg-transparent p-0 text-[var(--sb-accent)] transition-colors duration-100 hover:bg-[var(--sb-accent)]/15"
                 >
                   <Download size={12} />
                 </button>
@@ -1204,7 +1267,7 @@ function SelectedPanel({
                 <button
                   type="button"
                   onClick={() => onViewLayer?.(key)}
-                  className={`mt-0.5 flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded-[7px] border-0 p-0 transition-colors duration-100 ${
+                  className={`flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded-[7px] border-0 p-0 transition-colors duration-100 ${
                     isShowing
                       ? "bg-[var(--sb-accent)] text-[var(--sb-on-accent)]"
                       : "bg-transparent text-[var(--sb-accent)] hover:bg-[var(--sb-accent)]/15"
@@ -1225,11 +1288,12 @@ function SelectedPanel({
                 <button
                   type="button"
                   onClick={() => onToggle(key, null)}
-                  className="mt-0.5 flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded-[7px] border-0 bg-transparent p-0 text-red-500 transition-colors duration-100 hover:bg-red-500/10 hover:text-red-600"
+                  className="flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded-[7px] border-0 bg-transparent p-0 text-red-500 transition-colors duration-100 hover:bg-red-500/10 hover:text-red-600"
                 >
-                  <X size={13} strokeWidth={2.5} />
+                            <X size={13} strokeWidth={2.5} />
                 </button>
               </Tooltip>
+              </div>
             </div>
           );
         })}
@@ -1238,9 +1302,25 @@ function SelectedPanel({
   );
 }
 
-// ---------------- Forest Cover (checkbox tree above Municipalities) ----------------
+// ---------------- Forest Spatial Dataset (parent group) ----------------
 
-function ForestCoverSection({
+type ForestCounts = Record<string, number>;
+type LandClassType = (typeof LAND_CLASS_TYPES)[number];
+
+// Short one-liners shown in the "i" Data reference popover.
+// TODO: add the official source and year, like Forest Cover's "NAMRIA LCM 2025".
+const LAND_CLASS_REF: Record<string, string> = {                                           // <-- ADD
+  a_and_d: "Alienable and Disposable (A&D) land boundaries for Cagayan, this is base on the statistical profile.", // <-- ADD
+  forest_land: "Forest Land (FL) boundaries for Cagayan, this is base on the statistical profile.",                // <-- ADD
+};                                                                                         // <-- ADD
+
+// Row icon for each land-class type (A&D / Forest Land).
+const LAND_CLASS_ICON: Record<string, LucideIcon> = {
+  a_and_d: Landmark,
+  forest_land: TreePine,
+};
+
+function ForestDatasetSection({
   activeSelections,
   onToggle,
 }: {
@@ -1248,7 +1328,7 @@ function ForestCoverSection({
   onToggle: (key: string, meta: SelectionMeta | null) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const [counts, setCounts] = useState<Record<string, number>>({});
+  const [counts, setCounts] = useState<ForestCounts>({});
 
   useEffect(() => {
     fetch("/api/map/forest?summary=1")
@@ -1261,6 +1341,55 @@ function ForestCoverSection({
       .catch(() => {});
   }, []);
 
+  const total = Object.values(counts).reduce((a, b) => a + b, 0);
+  const anyActive = Object.keys(activeSelections).some((k) => k.startsWith("forest:"));
+
+  return (
+    <div className="mb-3">
+      <FolderRow
+        expanded={expanded}
+        onToggle={() => setExpanded((v) => !v)}
+        icon={
+          <Database
+            size={13}
+            className={anyActive ? "text-[var(--sb-accent)]" : "text-[var(--sb-text-faint)]"}
+          />
+        }
+        label="Forest Spatial Dataset"
+        count={total}
+        active={anyActive}
+      />
+      {expanded && (
+        <div className="ml-[25px]" style={{ borderLeft: `1px solid ${hairlineSoft}`, paddingLeft: 1 }}>
+          <ForestCoverSection activeSelections={activeSelections} onToggle={onToggle} counts={counts} />
+          {LAND_CLASS_TYPES.map((t) => (
+            <LandClassRow
+              key={t.type}
+              t={t}
+              checked={!!activeSelections[`forest:${t.type}`]}
+              count={counts[t.type] ?? 0}
+              onToggle={onToggle}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------- Forest Cover (nested folder with the three types) ----------------
+
+function ForestCoverSection({
+  activeSelections,
+  onToggle,
+  counts,
+}: {
+  activeSelections: Record<string, SelectionMeta>;
+  onToggle: (key: string, meta: SelectionMeta | null) => void;
+  counts: ForestCounts;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
   const keyOf = (t: string) => `forest:${t}`;
   const metaOf = (t: (typeof FOREST_TYPES)[number]): SelectionMeta => ({
     query: { forest_type: t.type },
@@ -1269,7 +1398,7 @@ function ForestCoverSection({
 
   const checkedCount = FOREST_TYPES.filter((t) => activeSelections[keyOf(t.type)]).length;
   const allChecked = checkedCount === FOREST_TYPES.length;
-  const total = Object.values(counts).reduce((a, b) => a + b, 0);
+  const total = FOREST_TYPES.reduce((sum, t) => sum + (counts[t.type] ?? 0), 0);
 
   function toggleAll() {
     FOREST_TYPES.forEach((t) => {
@@ -1280,7 +1409,7 @@ function ForestCoverSection({
   }
 
   return (
-    <div className="mb-3">
+    <div>
       <FolderRow
         expanded={expanded}
         onToggle={() => setExpanded((v) => !v)}
@@ -1303,7 +1432,7 @@ function ForestCoverSection({
         }
       />
       {expanded && (
-        <div className="ml-[25px]" style={{ borderLeft: `1px solid ${hairlineSoft}`, paddingLeft: 1 }}>
+        <div className="ml-[40px]" style={{ borderLeft: `1px solid ${hairlineSoft}`, paddingLeft: 1 }}>
           {FOREST_TYPES.map((t) => {
             const key = keyOf(t.type);
             const checked = !!activeSelections[key];
@@ -1335,6 +1464,49 @@ function ForestCoverSection({
   );
 }
 
+// ---------------- A&D Land / Forest Land row ----------------
+
+function LandClassRow({
+  t,
+  checked,
+  count,
+  onToggle,
+}: {
+  t: LandClassType;
+  checked: boolean;
+  count: number;
+  onToggle: (key: string, meta: SelectionMeta | null) => void;
+}) {
+  const key = `forest:${t.type}`;
+  const toggle = () =>
+    onToggle(key, checked ? null : { query: { forest_type: t.type }, label: t.fullName });
+
+    const RowIcon = LAND_CLASS_ICON[t.type] ?? Trees;
+
+  return (
+    <div
+      // pl-[32px] lines the checkbox up with the Forest Cover row's checkbox.
+      className={`flex w-full items-center gap-2 rounded-[9px] py-[5px] pl-[32px] pr-2 transition-colors duration-100 ${
+        checked ? "bg-[var(--sb-accent-bg)]" : "hover:bg-[var(--sb-hover)]"
+      }`}
+    >
+      <Checkbox checked={checked} onChange={toggle} />
+      <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center">
+        <RowIcon size={13} style={{ color: t.color }} />
+      </span>
+      <span
+        onClick={toggle}
+        className="min-w-0 flex-1 cursor-pointer truncate text-[12.5px] font-medium text-[var(--sb-text)]"
+      >
+        {t.label}
+      </span>
+      <InfoPopover label={`${t.fullName} data reference`} title="Data reference">
+        {LAND_CLASS_REF[t.type]}
+      </InfoPopover>
+      <span className="flex-shrink-0 tabular-nums text-[10.5px] text-[var(--sb-text-faint)]">({count})</span>
+    </div>
+  );
+}
 // ---------------- "Layers" tab: the browsable tree ----------------
 
 function LayersPanel({
@@ -1359,7 +1531,7 @@ function LayersPanel({
 }) {
   return (
     <div>
-      <ForestCoverSection activeSelections={activeSelections} onToggle={onToggle} />
+      <ForestDatasetSection activeSelections={activeSelections} onToggle={onToggle} />
 
       <div className="mb-1 flex items-center justify-between px-0.5">
         <h3 className="text-[10px] font-bold uppercase tracking-wide text-[var(--sb-text-muted)]">

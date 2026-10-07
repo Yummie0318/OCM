@@ -405,6 +405,10 @@ function MapViewerPageInner() {
   // to paint polygons) stay in sync through a single source of truth.
   const [lotColors, setLotColors] = useState<Record<string, string>>({});
 
+    // layer key (e.g. "year:1:2", "forest:xyz") -> border hex color chosen in
+  // the Selected tab. Expanded into per-lot colors for MapCanvas below.
+  const [layerBorderColors, setLayerBorderColors] = useState<Record<string, string>>({});
+
   const isResizingRef = useRef(false);
   const peekTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -713,7 +717,15 @@ function MapViewerPageInner() {
       return next;
     });
     // Unchecked / removed while still loading: close its loading toast.
-    if (meta === null) toast.dismiss(`project:${key}`);
+    if (meta === null) {
+      toast.dismiss(`project:${key}`);
+      setLayerBorderColors((prev) => {
+        if (!(key in prev)) return prev;
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+    }
     closeDetail();
   }
 
@@ -727,6 +739,15 @@ function MapViewerPageInner() {
 
   function handleDownloadLayer(key: string) {
     setDownloadKey(key);
+  }
+
+  function handleSetLayerBorderColor(key: string, color: string | null) {
+    setLayerBorderColors((prev) => {
+      const next = { ...prev };
+      if (color) next[key] = color;
+      else delete next[key];
+      return next;
+    });
   }
 
   useEffect(() => {
@@ -1261,6 +1282,110 @@ function MapViewerPageInner() {
     return n;
   }
 
+    // Superadmin/admin: set one date surveyed on every lot of the given sheets.
+  // POST /api/lot-sheets/bulk-date-surveyed, then patch the date onto exactly
+  // the lots the server changed. Resolves to the number of lots updated.
+  async function handleBulkSetDateSurveyed(
+    sheetIds: number[],
+    dateSurveyed: string,
+    mode: "fill" | "overwrite"
+  ): Promise<number> {
+    const res = await fetch("/api/lot-sheets/bulk-date-surveyed", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sheetIds, dateSurveyed, mode }),
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      const message = data.error || "Failed to update date surveyed.";
+      toast.error("Couldn't update date surveyed", { description: message });
+      throw new Error(message);
+    }
+
+    setNotificationsRefreshKey(Date.now());
+
+    const data: { updatedLotIds: Array<number | string>; updatedLotCount: number } = await res.json();
+    const changed = new Set(data.updatedLotIds.map(String));
+
+    const apply = (f: LotFeature): LotFeature =>
+      changed.has(String(f.id))
+        ? ({ ...f, properties: { ...f.properties, dateSurveyed } } as LotFeature)
+        : f;
+
+    setLayerData((d) => {
+      const next: typeof d = {};
+      for (const [key, feats] of Object.entries(d)) next[key] = feats.map(apply);
+      return next;
+    });
+    setSelectedFeature((f) => (f ? apply(f) : f));
+    setSheetPreview((p) => (p ? { ...p, lots: p.lots.map(apply) } : p));
+
+    const n = data.updatedLotCount;
+    if (n === 0) {
+      toast.info("Already up to date", {
+        description:
+          mode === "fill"
+            ? "Every lot on the selected sheet(s) already has a date surveyed."
+            : "All lots on the selected sheet(s) already have this date.",
+      });
+    } else {
+      toast.success(`Date surveyed applied to ${n} lot${n === 1 ? "" : "s"}`);
+    }
+    return n;
+  }
+
+    // Set one date approved on every lot of the given sheets.
+  async function handleBulkSetDateApproved(
+    sheetIds: number[],
+    dateApproved: string,
+    mode: "fill" | "overwrite"
+  ): Promise<number> {
+    const res = await fetch("/api/lot-sheets/bulk-date-approved", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sheetIds, dateApproved, mode }),
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      const message = data.error || "Failed to update date approved.";
+      toast.error("Couldn't update date approved", { description: message });
+      throw new Error(message);
+    }
+
+    setNotificationsRefreshKey(Date.now());
+
+    const data: { updatedLotIds: Array<number | string>; updatedLotCount: number } = await res.json();
+    const changed = new Set(data.updatedLotIds.map(String));
+
+    const apply = (f: LotFeature): LotFeature =>
+      changed.has(String(f.id))
+        ? ({ ...f, properties: { ...f.properties, dateApproved } } as LotFeature)
+        : f;
+
+    setLayerData((d) => {
+      const next: typeof d = {};
+      for (const [key, feats] of Object.entries(d)) next[key] = feats.map(apply);
+      return next;
+    });
+    setSelectedFeature((f) => (f ? apply(f) : f));
+    setSheetPreview((p) => (p ? { ...p, lots: p.lots.map(apply) } : p));
+
+    const n = data.updatedLotCount;
+    if (n === 0) {
+      toast.info("Already up to date", {
+        description:
+          mode === "fill"
+            ? "Every lot on the selected sheet(s) already has a date approved."
+            : "All lots on the selected sheet(s) already have this date.",
+      });
+    } else {
+      toast.success(`Date approved applied to ${n} lot${n === 1 ? "" : "s"}`);
+    }
+    return n;
+  }
+
   // Fired when the user picks a result from Sidebar's search bar (see
   // SearchBar's onSelect -> Sidebar's onSearchSelect prop). Fetches the
   // full polygon for that lot, then registers it as a real selection under
@@ -1602,6 +1727,15 @@ function MapViewerPageInner() {
     return Array.from(seen.values());
   }, [layerData]);
 
+    // lot id -> border color, expanded from the per-layer choice.
+  const lotBorderColors = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const [key, color] of Object.entries(layerBorderColors)) {
+      for (const f of layerData[key] ?? []) out[String(f.id)] = color;
+    }
+    return out;
+  }, [layerBorderColors, layerData]);
+
   const isLoading = loadingKeys.size > 0;
   const hasError = errorKeys.size > 0 || searchError;
   const hasTruncated = truncatedKeys.size > 0;
@@ -1704,6 +1838,8 @@ function MapViewerPageInner() {
               onCreateShapefile={() => setCreateModalOpen(true)}
               onViewLayer={handleViewLayer}
               onDownloadLayer={handleDownloadLayer}
+              layerBorderColors={layerBorderColors}
+              onSetLayerBorderColor={handleSetLayerBorderColor}
               activeTableKey={tableFilterKey}
               onActivityLogSelect={handleActivityLogSelect}
               notificationsRefreshKey={notificationsRefreshKey}
@@ -1752,6 +1888,8 @@ function MapViewerPageInner() {
                 onCreateShapefile={() => setCreateModalOpen(true)}
                 onViewLayer={handleViewLayer}
                 onDownloadLayer={handleDownloadLayer}
+                layerBorderColors={layerBorderColors}
+                onSetLayerBorderColor={handleSetLayerBorderColor}
                 activeTableKey={tableFilterKey}
                 onActivityLogSelect={handleActivityLogSelect}
                 notificationsRefreshKey={notificationsRefreshKey}
@@ -1786,6 +1924,7 @@ function MapViewerPageInner() {
             onPolygonClick={selectFeatureFromTable}
             onFeatureClick={openFeature}
             lotColors={lotColors}
+            borderColors={lotBorderColors}
             basemapId={basemapId}
             blankColor={theme.hoverBg}
           />
@@ -1979,6 +2118,8 @@ function MapViewerPageInner() {
                   onEditSheet={isSuperAdmin || isAdmin ? handleEditSheet : undefined}
                   onEditLot={isSuperAdmin || isAdmin ? handleEditLot : undefined}
                   onBulkSetSurveyNo={isSuperAdmin || isAdmin ? handleBulkSetSurveyNo : undefined}
+                  onBulkSetDateSurveyed={isSuperAdmin || isAdmin ? handleBulkSetDateSurveyed : undefined}
+                  onBulkSetDateApproved={isSuperAdmin || isAdmin ? handleBulkSetDateApproved : undefined}
                   canEditRecord={canEditRecord}
                 />
                 )}

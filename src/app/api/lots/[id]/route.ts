@@ -18,7 +18,8 @@ function ownerKey(g: string | null | undefined, s: string | null | undefined) {
 
 // PATCH /api/lots/[id]  (superadmin only)
 // Body: any of { lotNo, ownerGivenName, ownerSurname, surveyNo,
-//                dateSurveyed ("YYYY-MM-DD"), areaSqm, patentNo, remarks }
+//                areaSqm, patentNo, remarks }
+// (date surveyed is edited per sheet via /api/lot-sheets/bulk-date-surveyed)
 // Blank strings clear the field (except lotNo, which is required).
 // Geometry is never touched. Changing areaSqm here does NOT re-draw the polygon.
 export async function PATCH(
@@ -61,13 +62,7 @@ export async function PATCH(
   if (has("patentNo")) setCol("patent_no", text("patentNo"));
   if (has("remarks")) setCol("remarks", text("remarks"));
 
-  if (has("dateSurveyed")) {
-    const v = text("dateSurveyed");
-    if (v && !/^\d{4}-\d{2}-\d{2}$/.test(v)) {
-      return NextResponse.json({ error: "Date surveyed must be YYYY-MM-DD." }, { status: 400 });
-    }
-    setCol("date_surveyed", v);
-  }
+
   if (has("areaSqm")) {
     const v = text("areaSqm");
     if (v == null) {
@@ -151,7 +146,6 @@ export async function PATCH(
       ["ownerGivenName", "owner_given_name", asText],
       ["ownerSurname", "owner_surname", asText],
       ["surveyNo", "survey_no", asText],
-      ["dateSurveyed", "date_surveyed", asText],
       ["areaSqm", "area_sqm", asNum],
       ["patentNo", "patent_no", asText],
       ["remarks", "remarks", asText],

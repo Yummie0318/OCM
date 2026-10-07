@@ -28,6 +28,7 @@ const COLUMNS = [
   "OWNER",
   "BARANGAY",
   "DATE SURVEYED",
+  "DATE APPROVED",
   "SURVEYOR",
   "AREA(SQM)",
   "PATENT NO.",
@@ -39,9 +40,9 @@ const COL_LOT_SHEET = 0;
 const COL_MUNICIPALITY = 1;
 const COL_SURVEY_NO = 2;
 const COL_LOT_NO = 3;
-const COL_SURVEYOR = 7;
-const COL_AREA = 8;
-const COL_REMARKS = 10;
+const COL_SURVEYOR = 8;
+const COL_AREA = 9;
+const COL_REMARKS = 11;
 
 // Excel worksheet names: max 31 chars, and can't contain \ / ? * [ ] :
 // Also must be unique within the workbook.
@@ -82,6 +83,7 @@ export function buildLotReportWorkbook(groups: CenroGroup[], label: string) {
           lot.properties.owner || "",
           lot.properties.barangay || "",
           formatDate(lot.properties.dateSurveyed),
+          formatDate(lot.properties.dateApproved),
           lot.properties.surveyor || "",
           lot.properties.areaSqm != null ? Number(lot.properties.areaSqm) : "",
           lot.properties.patentNo || "",
@@ -124,6 +126,7 @@ export function buildLotReportWorkbook(groups: CenroGroup[], label: string) {
       { wch: 26 }, // OWNER
       { wch: 16 }, // BARANGAY
       { wch: 14 }, // DATE SURVEYED
+      { wch: 14 }, // DATE APPROVED
       { wch: 20 }, // SURVEYOR
       { wch: 12 }, // AREA(SQM)
       { wch: 12 }, // PATENT NO.

@@ -1,7 +1,8 @@
 "use client";
 
 import React from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { LotFeature } from "@/lib/geo";
 import { isTraceableGoogleDriveLink, PLAN_LINK_HELP_MESSAGE } from "@/lib/planLink";
 import SummaryBar from "@/components/map/SummaryBar";
@@ -24,11 +25,11 @@ import {
 } from "lucide-react";  
 
 const COLOR_PRESETS: { label: string; value: string }[] = [
-  { label: "Titled", value: "#22c55e" },
-  { label: "Untitled", value: "#ef4444" },
-  { label: "Pending", value: "#f59e0b" },
-  { label: "Reference", value: "#3b82f6" },
-  { label: "Flagged", value: "#a855f7" },
+  { label: "", value: "#22c55e" },
+  { label: "", value: "#ef4444" },
+  { label: "", value: "#f59e0b" },
+  { label: "", value: "#3b82f6" },
+  { label: "", value: "#a855f7" },
 ];
 
 export const HAIRLINE = "color-mix(in srgb, var(--sb-border) 70%, transparent)";
@@ -68,6 +69,11 @@ export function hexToRgba(hex: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
+// Portaled to <body> with fixed positioning so it is never clipped by the
+// table's scroll containers (overflow-x/y) and always paints above
+// everything else (sticky headers, modals use z-[60]; this uses z-[9999]).
+// Because it lives outside the sidebar theme wrapper, it uses fixed colors
+// (same as the sidebar's Tooltip) instead of --sb-* variables.
 export function Tooltip({
   label,
   children,
@@ -77,43 +83,89 @@ export function Tooltip({
   children: React.ReactNode;
   position?: "top" | "bottom";
 }) {
+  const wrapperRef = useRef<HTMLSpanElement>(null);
+  const tipRef = useRef<HTMLSpanElement>(null);
   const [show, setShow] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  function place() {
+    const el = wrapperRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const gap = 8;
+    setCoords({
+      top: position === "top" ? r.top - gap : r.bottom + gap,
+      left: r.left + r.width / 2,
+    });
+  }
+
+  function open() {
+    place();
+    setShow(true);
+  }
+
+  // Hide when anything scrolls or the window resizes, since a fixed tooltip
+  // would otherwise stay behind while its trigger moves.
+  useEffect(() => {
+    if (!show) return;
+    const close = () => setShow(false);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [show]);
+
+  // Keep the tooltip inside the viewport horizontally.
+  useLayoutEffect(() => {
+    if (!show || !coords || !tipRef.current) return;
+    const w = tipRef.current.offsetWidth;
+    const margin = 8;
+    const min = margin + w / 2;
+    const max = window.innerWidth - margin - w / 2;
+    const clamped = Math.min(Math.max(coords.left, min), Math.max(min, max));
+    if (clamped !== coords.left) setCoords({ ...coords, left: clamped });
+  }, [show, coords]);
+
   return (
     <span
+      ref={wrapperRef}
       className="relative inline-flex"
-      onMouseEnter={() => setShow(true)}
+      onMouseEnter={open}
       onMouseLeave={() => setShow(false)}
-      onFocus={() => setShow(true)}
+      onFocus={open}
       onBlur={() => setShow(false)}
       onClick={(e) => {
         e.stopPropagation();
-        setShow((s) => !s);
+        if (show) setShow(false);
+        else open();
       }}
     >
       {children}
-      {show && (
-        <span
-          role="tooltip"
-          className={`pointer-events-none absolute left-1/2 z-30 -translate-x-1/2 whitespace-nowrap rounded-md px-2 py-1 text-[11px] font-medium shadow-md ${
-            position === "top" ? "bottom-full mb-1.5" : "top-full mt-1.5"
-          }`}
-          style={{ background: "var(--sb-text)", color: "var(--sb-bg-elevated)" }}
-        >
-          {label}
+      {mounted &&
+        show &&
+        coords &&
+        createPortal(
           <span
-            className={`absolute left-1/2 -translate-x-1/2 ${position === "top" ? "top-full" : "bottom-full"}`}
+            ref={tipRef}
+            role="tooltip"
+            className="pointer-events-none fixed z-[9999] w-max max-w-[260px] whitespace-normal break-words rounded-md bg-[#1f2430] px-2 py-1 text-[11px] font-medium leading-snug text-white shadow-lg"
             style={{
-              width: 0,
-              height: 0,
-              borderLeft: "4px solid transparent",
-              borderRight: "4px solid transparent",
-              ...(position === "top"
-                ? { borderTop: "4px solid var(--sb-text)" }
-                : { borderBottom: "4px solid var(--sb-text)" }),
+              top: coords.top,
+              left: coords.left,
+              transform: position === "top" ? "translate(-50%, -100%)" : "translate(-50%, 0)",
             }}
-          />
-        </span>
-      )}
+          >
+            {label}
+          </span>,
+          document.body
+        )}
     </span>
   );
 }
@@ -155,6 +207,16 @@ interface Props {
     surveyNo: string,
     mode: "fill" | "overwrite"
   ) => Promise<number>;
+    onBulkSetDateSurveyed?: (
+    sheetIds: number[],
+    dateSurveyed: string,
+    mode: "fill" | "overwrite"
+  ) => Promise<number>;
+  onBulkSetDateApproved?: (
+    sheetIds: number[],
+    dateApproved: string,
+    mode: "fill" | "overwrite"
+  ) => Promise<number>;
 }
 
 interface SheetGroup {
@@ -168,6 +230,12 @@ interface SheetGroup {
   municipality: string | null;
   encodedBy: string | null;
   surveyNo: string | null;
+  dateSurveyed: string | null;
+  hasMissingDate: boolean;
+  dateApproved: string | null;
+  hasMissingApproved: boolean;
+  rfpaCount: number;
+  fpaCount: number;
   hasMissingSurveyNo: boolean;
   lots: LotFeature[];
   totalArea: number;
@@ -178,9 +246,9 @@ const LOT_COLUMNS = [
   "Owner",
   "Barangay",
   "Municipality",
-  "Date Surveyed",
   "Surveyor",
   "Area (sq.m.)",
+  "Classification",
   "Patent No.",
   "Remarks",
 ];
@@ -263,6 +331,23 @@ function SurveyClassBadge({ value }: { value: "admin" | "private" }) {
       }}
     >
       {value}
+    </span>
+  );
+}
+
+// RFPA / FPA pill, used per lot in the Lots table and as counts in the Sheets table.
+function ClassificationBadge({ value, count }: { value: "RFPA" | "FPA"; count?: number }) {
+  const isRfpa = value === "RFPA";
+  return (
+    <span
+      className="inline-flex items-center gap-1 rounded-full px-2 py-[2px] text-[10px] font-bold uppercase tracking-wide"
+      style={{
+        background: isRfpa ? "rgba(16, 185, 129, 0.14)" : "rgba(245, 158, 11, 0.16)",
+        color: isRfpa ? "#10b981" : "#d97706",
+      }}
+    >
+      {value}
+      {count != null && <span className="tabular-nums">{count}</span>}
     </span>
   );
 }
@@ -460,7 +545,6 @@ export interface LotEditValues {
   lotNo: string;
   ownerGivenName: string;
   ownerSurname: string;
-  dateSurveyed: string;
   areaSqm: string;
   patentNo: string;
   remarks: string;
@@ -480,9 +564,19 @@ const SHEET_EDIT_FIELDS: EditField[] = [
   { name: "sheetNo", label: "Sheet No.", kind: "text", required: true },
   {
     name: "surveyNo",
-    label: "Survey No. (applies to all lots on this sheet)",
+    label: "Survey No. ",
     kind: "text",
     placeholder: "Changing this updates every lot on the sheet",
+  },
+  {
+    name: "dateSurveyed",
+    label: "Date surveyed ",
+    kind: "date",
+  },
+  {
+    name: "dateApproved",
+    label: "Date approved ",
+    kind: "date",
   },
   {
     name: "surveyClass",
@@ -503,7 +597,6 @@ const LOT_EDIT_FIELDS: EditField[] = [
   { name: "patentNo", label: "Patent No.", kind: "text", half: true },
   { name: "ownerGivenName", label: "Owner given name", kind: "text", half: true },
   { name: "ownerSurname", label: "Owner surname", kind: "text", half: true },
-  { name: "dateSurveyed", label: "Date surveyed", kind: "date", half: true },
   { name: "areaSqm", label: "Area (sq.m.)", kind: "number", half: true },
   { name: "remarks", label: "Remarks", kind: "textarea" },
 ];
@@ -847,6 +940,117 @@ function BulkSurveyNoControl({
     </div>
   );
 }
+function BulkDateSurveyedControl({
+  sheetCount,
+  onApply,
+  label = "Set Date Surveyed",
+  noun = "date surveyed",
+}: {
+  sheetCount: number;
+  onApply: (date: string, mode: "fill" | "overwrite") => Promise<number>;
+  label?: string;
+  noun?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState("");
+  const [mode, setMode] = useState<"fill" | "overwrite">("fill");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleApply() {
+    if (!value) return;
+    if (
+      mode === "overwrite" &&
+      !window.confirm(`Overwrite the ${noun} on EVERY lot in ${sheetCount} sheet(s)? This replaces existing values.`)
+    ) {
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await onApply(value, mode);
+      setOpen(false);
+      setValue("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't save.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const fieldStyle: React.CSSProperties = {
+    background: "var(--sb-bg)",
+    color: "var(--sb-text)",
+    boxShadow: `inset 0 0 0 1px ${HAIRLINE}`,
+  };
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => {
+          setError(null);
+          setOpen(true);
+        }}
+        className="inline-flex items-center gap-1 rounded-full border border-dashed px-2 py-[3px] text-[10.5px] font-semibold text-[var(--sb-accent-text)] hover:border-solid"
+        style={{
+          borderColor: "color-mix(in srgb, var(--sb-accent-text) 55%, transparent)",
+          background: "var(--sb-accent-bg)",
+        }}
+      >
+        <Pencil size={10} />
+        {label}
+      </button>
+    );
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <input
+        autoFocus
+        type="date"
+        value={value}
+        disabled={saving}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") handleApply();
+          if (e.key === "Escape") setOpen(false);
+        }}
+        className="rounded-md px-1.5 py-[3px] text-[11px] outline-none"
+        style={fieldStyle}
+      />
+      <select
+        value={mode}
+        disabled={saving}
+        onChange={(e) => setMode(e.target.value as "fill" | "overwrite")}
+        className="rounded-md px-1.5 py-[3px] text-[11px] outline-none"
+        style={fieldStyle}
+      >
+        <option value="fill">Only lots with no date</option>
+        <option value="overwrite">Overwrite all lots</option>
+      </select>
+      <button
+        type="button"
+        onClick={handleApply}
+        disabled={saving || !value}
+        className="inline-flex items-center gap-1 rounded-full border-0 px-2.5 py-[3px] text-[10.5px] font-semibold disabled:opacity-40"
+        style={{ background: "var(--sb-accent)", color: "var(--sb-on-accent)" }}
+      >
+        {saving && <Loader2 size={10} className="animate-spin" />}
+        Apply to {sheetCount} sheet{sheetCount === 1 ? "" : "s"}
+      </button>
+      <button
+        type="button"
+        onClick={() => setOpen(false)}
+        disabled={saving}
+        className="text-[10.5px] font-medium text-[var(--sb-text-faint)] hover:text-[var(--sb-text-muted)]"
+      >
+        Cancel
+      </button>
+      {error && <span className="text-[11px] font-medium text-red-500">{error}</span>}
+    </div>
+  );
+}
 
 export function Checkbox({
   checked,
@@ -1075,6 +1279,8 @@ export default function AttributeTable({
   onEditLot,
   canEditRecord,
   onBulkSetSurveyNo,
+  onBulkSetDateSurveyed,
+  onBulkSetDateApproved,
 }: Props) {
   const { vars } = useSidebarTheme();
   const [expandedSheetKey, setExpandedSheetKey] = useState<string | null>(null);
@@ -1113,11 +1319,23 @@ export default function AttributeTable({
       const rawSurvey = f.properties.surveyNo;
       const surveyStr =
         rawSurvey != null && String(rawSurvey).trim() !== "" ? String(rawSurvey).trim() : null;
+      const rawDate = f.properties.dateSurveyed;
+      const dateStr = rawDate != null && String(rawDate).trim() !== "" ? String(rawDate).trim() : null;
+      const cls = String((f.properties as any).classification ?? "").toUpperCase();
+      const rawApproved = f.properties.dateApproved;
+      const approvedStr =
+        rawApproved != null && String(rawApproved).trim() !== "" ? String(rawApproved).trim() : null;
       if (existing) {
         existing.lots.push(f);
         existing.totalArea += area;
         if (!existing.surveyNo && surveyStr) existing.surveyNo = surveyStr;
+        if (!existing.dateSurveyed && dateStr) existing.dateSurveyed = dateStr;
+        if (!dateStr) existing.hasMissingDate = true;
+        if (!existing.dateApproved && approvedStr) existing.dateApproved = approvedStr;
+        if (!approvedStr) existing.hasMissingApproved = true;
         if (!surveyStr) existing.hasMissingSurveyNo = true;
+        if (cls === "RFPA") existing.rfpaCount += 1;
+        else if (cls === "FPA") existing.fpaCount += 1;
       } else {
         map.set(key, {
           key,
@@ -1130,6 +1348,12 @@ export default function AttributeTable({
           municipality: f.properties.municipality,
           encodedBy: f.properties.encodedBy,
           surveyNo: surveyStr,
+          dateSurveyed: dateStr,   // <-- ADD
+          hasMissingDate: !dateStr,
+          dateApproved: approvedStr,
+          hasMissingApproved: !approvedStr,
+          rfpaCount: cls === "RFPA" ? 1 : 0,
+          fpaCount: cls === "FPA" ? 1 : 0,
           hasMissingSurveyNo: !surveyStr,
           lots: [f],
           totalArea: area,
@@ -1440,6 +1664,42 @@ export default function AttributeTable({
               }
             />
           )}
+          {onBulkSetDateSurveyed &&
+            sheetGroups
+              .filter((g) => sheetColorSelectedKeys.has(g.key))
+              .every((g) => !canEditRecord || canEditRecord(g.encodedBy)) && (
+              <BulkDateSurveyedControl
+                sheetCount={sheetColorSelectedKeys.size}
+                onApply={(date, mode) =>
+                  onBulkSetDateSurveyed(
+                    sheetGroups
+                      .filter((g) => sheetColorSelectedKeys.has(g.key) && g.sheetId != null)
+                      .map((g) => g.sheetId as number),
+                    date,
+                    mode
+                  )
+                }
+              />
+            )}
+          {onBulkSetDateApproved &&
+            sheetGroups
+              .filter((g) => sheetColorSelectedKeys.has(g.key))
+              .every((g) => !canEditRecord || canEditRecord(g.encodedBy)) && (
+              <BulkDateSurveyedControl
+                label="Set Date Approved"
+                noun="date approved"
+                sheetCount={sheetColorSelectedKeys.size}
+                onApply={(date, mode) =>
+                  onBulkSetDateApproved(
+                    sheetGroups
+                      .filter((g) => sheetColorSelectedKeys.has(g.key) && g.sheetId != null)
+                      .map((g) => g.sheetId as number),
+                    date,
+                    mode
+                  )
+                }
+              />
+            )}
         </div>
       )}
 
@@ -1550,6 +1810,8 @@ export default function AttributeTable({
               initial={{
                 sheetNo: opened.sheetNo === "—" ? "" : opened.sheetNo,
                 surveyNo: opened.surveyNo ?? "",
+                dateSurveyed: toDateInputValue(opened.dateSurveyed),
+                dateApproved: toDateInputValue(opened.dateApproved),
                 surveyClass: opened.surveyClass ?? "",
                 planUrl: opened.planUrl ?? "",
                 documentsUrl: opened.documentsUrl ?? "",
@@ -1561,8 +1823,10 @@ export default function AttributeTable({
                 return null;
               }}
               onSave={async (v, base) => {
-                const { surveyNo, ...sheetValues } = v;
+                const { surveyNo, dateSurveyed, dateApproved, ...sheetValues } = v;
+                const newApproved = dateApproved.trim();
                 const newSurveyNo = surveyNo.trim();
+                const newDate = dateSurveyed.trim();
 
                 const sheetChanged = ["sheetNo", "surveyClass", "planUrl", "documentsUrl"].some(
                   (k) => (v[k] ?? "").trim() !== (base[k] ?? "").trim()
@@ -1578,6 +1842,22 @@ export default function AttributeTable({
                     await onBulkSetSurveyNo([sid], newSurveyNo, "fill");
                   }
                 }
+                if (newDate && onBulkSetDateSurveyed) {
+                  if (newDate !== (base.dateSurveyed ?? "").trim()) {
+                    await onBulkSetDateSurveyed([sid], newDate, "overwrite");
+                  } else if (g.hasMissingDate) {
+                    await onBulkSetDateSurveyed([sid], newDate, "fill");
+                  }
+                }
+
+                if (newApproved && onBulkSetDateApproved) {
+                  if (newApproved !== (base.dateApproved ?? "").trim()) {
+                    await onBulkSetDateApproved([sid], newApproved, "overwrite");
+                  } else if (g.hasMissingApproved) {
+                    await onBulkSetDateApproved([sid], newApproved, "fill");
+                  }
+                }
+                
               }}
               onClose={() => setEditTarget(null)}
             />
@@ -1602,7 +1882,6 @@ export default function AttributeTable({
                 lotNo: opened.lotNo != null ? String(opened.lotNo) : "",
                 ownerGivenName: opened.ownerGivenName ?? "",
                 ownerSurname: opened.ownerSurname ?? "",
-                dateSurveyed: toDateInputValue(opened.dateSurveyed),
                 areaSqm: opened.areaSqm != null && opened.areaSqm !== "" ? String(opened.areaSqm) : "",
                 patentNo: opened.patentNo ?? "",
                 remarks: opened.remarks ?? "",
@@ -1698,7 +1977,7 @@ function SheetsTable({
   // the visible viewport. `min-w` on the table itself is unchanged and
   // still what forces horizontal scroll to kick in on narrow screens.
   return (
-    <table className="w-full min-w-[920px] border-collapse text-[11.5px]">
+    <table className="w-full min-w-[1280px] border-collapse text-[11.5px]">
       <thead>
         <tr>
           <th
@@ -1720,8 +1999,11 @@ function SheetsTable({
           <Th>Plan</Th>
           <Th>Documents</Th>
           <Th>Survey No.</Th>
-          <Th>Class</Th>
+          <Th>Survey Class</Th>
+          <Th>Date Surveyed</Th>
+          <Th>Date Approved</Th>
           <Th numeric>Lots</Th>
+          <Th>Classification</Th>
           <Th numeric>Total Area (sq.m.)</Th>
           <Th>Encoded By</Th>
           {(onViewSheet || onEditSheet) && <Th>Actions</Th>}
@@ -1772,10 +2054,22 @@ function SheetsTable({
                     })()
                   : "—"}
               </td>
-              <td className="px-2.5 py-[6px] font-medium text-[var(--sb-text)]">{g.sheetNo}</td>
+              <td className="max-w-[150px] px-2.5 py-[6px] font-medium text-[var(--sb-text)]">
+                <span className="block max-w-[150px] truncate" title={g.sheetNo}>
+                  {g.sheetNo}
+                </span>
+              </td>
 
-              <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{g.municipality || "—"}</td>
-              <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{g.province || "—"}</td>
+              <td className="max-w-[130px] px-2.5 py-[6px] text-[var(--sb-text-muted)]">
+                <span className="block max-w-[130px] truncate" title={g.municipality || ""}>
+                  {g.municipality || "—"}
+                </span>
+              </td>
+              <td className="max-w-[110px] px-2.5 py-[6px] text-[var(--sb-text-muted)]">
+                <span className="block max-w-[110px] truncate" title={g.province || ""}>
+                  {g.province || "—"}
+                </span>
+              </td>
               <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]" onClick={(e) => e.stopPropagation()}>
                 {g.planUrl ? (
                   <PlanLink url={g.planUrl} label="View" />
@@ -1814,7 +2108,11 @@ function SheetsTable({
               </td>
               <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]" onClick={(e) => e.stopPropagation()}>
                 <span className="inline-flex flex-wrap items-center gap-1.5">
-                  {g.surveyNo ? <span className="text-[var(--sb-text)]">{g.surveyNo}</span> : null}
+                  {g.surveyNo ? (
+                    <span className="block max-w-[150px] truncate text-[var(--sb-text)]" title={g.surveyNo}>
+                      {g.surveyNo}
+                    </span>
+                  ) : null}
                   {!g.surveyNo && g.sheetId != null && onUpdateSurveyNo ? (
                     <InlineFieldControl
                       sheetId={g.sheetId}
@@ -1846,11 +2144,31 @@ function SheetsTable({
                   "—"
                 )}
               </td>
+              <td className="whitespace-nowrap px-2.5 py-[6px] text-[var(--sb-text-muted)]">
+                {formatDate(g.dateSurveyed)}
+              </td>
+              <td className="whitespace-nowrap px-2.5 py-[6px] text-[var(--sb-text-muted)]">
+                {formatDate(g.dateApproved)}
+              </td>
               <td className="px-2.5 py-[6px] text-right tabular-nums text-[var(--sb-text-muted)]">{g.lots.length}</td>
+                <td className="px-2.5 py-[6px]">
+                {g.rfpaCount + g.fpaCount === 0 ? (
+                  <span className="text-[var(--sb-text-muted)]">—</span>
+                ) : (
+                  <span className="inline-flex flex-wrap items-center gap-1">
+                    {g.rfpaCount > 0 && <ClassificationBadge value="RFPA" count={g.rfpaCount} />}
+                    {g.fpaCount > 0 && <ClassificationBadge value="FPA" count={g.fpaCount} />}
+                  </span>
+                )}
+              </td>
               <td className="px-2.5 py-[6px] text-right tabular-nums text-[var(--sb-text-muted)]">
                 {formatArea(g.totalArea)}
               </td>
-              <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{g.encodedBy || "—"}</td>
+              <td className="max-w-[120px] px-2.5 py-[6px] text-[var(--sb-text-muted)]">
+                <span className="block max-w-[120px] truncate" title={g.encodedBy || ""}>
+                  {g.encodedBy || "—"}
+                </span>
+              </td>
               {(onViewSheet || onEditSheet) && (
                 <td className="px-2.5 py-[6px]" onClick={(e) => e.stopPropagation()}>
                   <div className="flex items-center gap-1.5">
@@ -1941,7 +2259,7 @@ function LotsTable({
   // per-table `overflow-x-auto` div was removed here too. `min-w` on the
   // table is unchanged.
   return (
-    <table className="w-full min-w-[760px] border-collapse text-[11.5px]">
+    <table className="w-full min-w-[860px] border-collapse text-[11.5px]">
       <thead>
         <tr>
           <th
@@ -2048,12 +2366,19 @@ function LotsTable({
               </td>
               <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{f.properties.barangay}</td>
               <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{f.properties.municipality}</td>
-              <td className="whitespace-nowrap px-2.5 py-[6px] text-[var(--sb-text-muted)]">
-                {formatDate(f.properties.dateSurveyed)}
-              </td>
               <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{f.properties.surveyor}</td>
               <td className="px-2.5 py-[6px] text-right tabular-nums text-[var(--sb-text-muted)]">
                {formatArea(f.properties.areaSqm)}
+              </td>
+              <td className="px-2.5 py-[6px]">
+                {(() => {
+                  const c = String((f.properties as any).classification ?? "").toUpperCase();
+                  return c === "RFPA" || c === "FPA" ? (
+                    <ClassificationBadge value={c} />
+                  ) : (
+                    <span className="text-[var(--sb-text-muted)]">—</span>
+                  );
+                })()}
               </td>
               <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{f.properties.patentNo}</td>
               <td className="max-w-[160px] px-2.5 py-[6px] text-[var(--sb-text-muted)]">

@@ -23,6 +23,10 @@ export interface LotFeature {
     barangay: string | null;
     surveyNo: string | null;
     dateSurveyed: string | null;
+    // Per-lot in the DB (lots.date_approved) but set per sheet in the UI,
+    // same as dateSurveyed. Optional so client-only features (the
+    // preview-before-saving map in toLotFeature.ts) don't have to supply it.
+    dateApproved?: string | null;
     surveyor: string | null;
     areaSqm: number | null;
     // Numeric FK to lot_sheets.id — the reliable grouping key for the

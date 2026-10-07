@@ -146,7 +146,7 @@
 import { useEffect, useRef } from "react";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { LotFeature } from "@/lib/geo";
-import { FOREST_COLOR } from "@/lib/forest";
+import { FOREST_COLOR, isLandClassFeature } from "@/lib/forest";
 
 interface FocusPoint {
   lng: number;
@@ -192,6 +192,9 @@ interface Props {
   // from AttributeTable's color-selection toolbar). Optional so MapCanvas
   // keeps working in any context that doesn't care about coloring.
   lotColors?: Record<string, string>;
+    // Map of lot id (stringified) -> hex border color. Overrides the outline
+  // color only; the fill keeps using `lotColors`.
+  borderColors?: Record<string, string>;
   // Which basemap tile set to render. Optional, defaults to "light" (the
   // old fixed Positron look), so existing callers don't need to change.
   basemapId?: BasemapId;
@@ -539,11 +542,23 @@ function buildForestPopupHtml(p: Record<string, unknown>): string {
     p.areaHa != null
       ? `${escapeHtml(Number(p.areaHa).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }))} ha`
       : "—";
+  const rows: [string, unknown][] = [
+    ["Municipality", p.municipality],
+    ["CENRO", p.cenro],
+    ["District", p.district],
+  ];
+  const extra = rows
+    .filter(([, v]) => v)
+    .map(
+      ([k, v]) =>
+        `<dt>${k}</dt><dd style="text-transform:${k === "District" ? "capitalize" : "none"}">${escapeHtml(v)}</dd>`
+    )
+    .join("");
   return `
     <div class="lot-popup">
       <div class="lot-popup-header"><span class="lot-popup-title">${escapeHtml(p.label ?? "Forest")}</span></div>
       <div class="lot-popup-body">
-        <dl class="lot-popup-grid"><dt>Area</dt><dd>${ha}</dd></dl>
+        <dl class="lot-popup-grid">${extra}<dt>Area</dt><dd>${ha}</dd></dl>
       </div>
     </div>
   `;
@@ -557,6 +572,7 @@ export default function MapCanvas({
   onPolygonClick,
   onFeatureClick,
   lotColors,
+  borderColors,
   basemapId = "light",
   blankColor = BLANK_BACKGROUND_COLOR,
 }: Props) {
@@ -578,6 +594,8 @@ export default function MapCanvas({
   featuresRef.current = features;
   const lotColorsRef = useRef(lotColors);
   lotColorsRef.current = lotColors;
+  const borderColorsRef = useRef(borderColors);
+  borderColorsRef.current = borderColors;
   const focusPointRef = useRef(focusPoint);
   focusPointRef.current = focusPoint;
   const basemapIdRef = useRef(basemapId);
@@ -681,7 +699,12 @@ export default function MapCanvas({
             // outline when a lot has no color assigned. This is what was
             // missing before: this layer used to be hardcoded to a fixed
             // blue and never looked at __color at all.
-            "line-color": ["coalesce", ["get", "__color"], DEFAULT_LINE_COLOR],
+            "line-color": [
+              "coalesce",
+              ["get", "__border"],
+              ["get", "__color"],
+              DEFAULT_LINE_COLOR,
+            ],
             // Thicker outline far out so small lots stay visible; back to
             // 2px once zoomed in.
             "line-width": [
@@ -723,7 +746,12 @@ export default function MapCanvas({
           source: SOURCE_ID,
           filter: ["==", ["id"], -1],
           paint: {
-            "line-color": ["coalesce", ["get", "__color"], DEFAULT_HIGHLIGHT_LINE_COLOR],
+            "line-color": [
+              "coalesce",
+              ["get", "__border"],
+              ["get", "__color"],
+              DEFAULT_HIGHLIGHT_LINE_COLOR,
+            ],
             "line-width": [
               "interpolate",
               ["linear"],
@@ -748,7 +776,7 @@ export default function MapCanvas({
           // just when the button is clicked) since it needs to be the
           // value captured in the button's click listener's closure, and
           // is also what we hand to onPolygonClick below.
-          const { __color, ...cleanProps } = p;
+          const { __color, __border, ...cleanProps } = p;
           const cleanFeature = {
             type: "Feature",
             id: feature.id,
@@ -834,7 +862,8 @@ export default function MapCanvas({
   function setFeatures(
     feats: LotFeature[],
     colors: Record<string, string> | undefined,
-    activeFocusPoint: FocusPoint | null | undefined
+    activeFocusPoint: FocusPoint | null | undefined,
+    shouldFit: boolean = true
   ) {
     const map = mapRef.current;
     if (!map || !loadedRef.current) return;
@@ -845,10 +874,12 @@ export default function MapCanvas({
     // Bake each lot's color (if any) into its properties as __color, which
     // both the base fill/line layers AND the highlight layers read via
     // ["get", "__color"].
+    const borders = borderColorsRef.current;
     const withColor = feats.map((f) => ({
       ...f,
       properties: {
         ...f.properties,
+        __border: borders?.[String(f.id)] ?? null,
         __color:
           colors?.[String(f.id)] ??
           ((f.properties as any).kind === "forest"
@@ -858,16 +889,14 @@ export default function MapCanvas({
       },
     }));
 
-    // Forests first so lots draw on top of them.
-    withColor.sort(
-      (a, b) =>
-        Number((a.properties as any).kind === "forest" ? 0 : 1) -
-        Number((b.properties as any).kind === "forest" ? 0 : 1)
-    );
+    // Draw order: A&D / Forest Land first, then forest cover, then lots on top.
+    const drawRank = (f: any) =>
+      f.properties.kind !== "forest" ? 2 : isLandClassFeature(f) ? 0 : 1;
+    withColor.sort((a, b) => drawRank(a) - drawRank(b));
 
     source.setData({ type: "FeatureCollection", features: withColor });
 
-    if (feats.length === 0) return;
+    if (feats.length === 0 || !shouldFit) return;
 
     // Compute bounds across all features and fit the view to them. Skipped
     // when a focusPoint is explicitly set (e.g. a search selection) so we
@@ -947,6 +976,13 @@ export default function MapCanvas({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lotColors]);
 
+    // Repaint outlines when a layer's border color changes. shouldFit = false
+  // so the map doesn't jump/zoom while picking a color.
+  useEffect(() => {
+    setFeatures(features, lotColors, focusPoint, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [borderColors]);
+  
   // Highlight whichever lot is currently selected (e.g. via search, a map
   // click, or a table row click).
   useEffect(() => {
