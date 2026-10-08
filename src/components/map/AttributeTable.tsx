@@ -310,7 +310,7 @@ function PlanLink({ url, stopPropagation, label }: { url: string; stopPropagatio
       rel: "noopener noreferrer",
       onClick: stopPropagation ? (e: React.MouseEvent) => e.stopPropagation() : undefined,
       className:
-        "inline-flex items-center gap-1 rounded-full border-0 bg-[var(--sb-hover)] px-2 py-[3px] text-[10.5px] font-semibold text-[var(--sb-accent-text)] transition-colors duration-100 hover:bg-[var(--sb-accent-bg)]",
+        "normal-case inline-flex items-center gap-1 rounded-full border-0 bg-[var(--sb-hover)] px-2 py-[3px] text-[10.5px] font-semibold text-[var(--sb-accent-text)] transition-colors duration-100 hover:bg-[var(--sb-accent-bg)]",
     },
     React.createElement(ExternalLink, { size: 10 }),
     label
@@ -1492,9 +1492,19 @@ export default function AttributeTable({
         <div className="flex flex-1 flex-col items-center justify-center gap-1.5 px-4 text-center">
           {loading ? (
             <>
-              <Loader2 size={16} className="animate-spin text-[var(--sb-text-faint)]" />
-              <p className="text-[12.5px] font-medium text-[var(--sb-text)]">Loading lots…</p>
-              <p className="text-[11.5px] text-[var(--sb-text-faint)]">This should only take a moment.</p>
+              <div className="relative flex h-11 w-11 items-center justify-center">
+                <span className="absolute inset-0 rounded-full border-2" style={{ borderColor: HAIRLINE }} />
+                <span className="absolute inset-0 animate-spin rounded-full border-2 border-transparent border-t-[var(--sb-accent)]" />
+                <Table2 size={15} className="text-[var(--sb-accent)]" />
+              </div>
+              <p className="mt-1 text-[12.5px] font-medium text-[var(--sb-text)]">Loading lots…</p>
+              <p className="text-[11.5px] text-[var(--sb-text-faint)]">
+                Projecting your layer onto the map. This should only take a moment.
+              </p>
+              <div className="mt-1 h-[3px] w-40 overflow-hidden rounded-full bg-[var(--sb-hover)]">
+                <div className="h-full w-1/3 animate-[loader-slide_1.1s_ease-in-out_infinite] rounded-full bg-[var(--sb-accent)]" />
+              </div>
+              <style>{`@keyframes loader-slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(300%); } }`}</style>
             </>
           ) : (
             <>
@@ -1520,6 +1530,13 @@ export default function AttributeTable({
     <div className={`${uiFont.className} flex h-full flex-col bg-[var(--sb-bg)] antialiased`} style={vars}>
       {filterLabel && onClearFilter && <FilterChip label={filterLabel} onClear={onClearFilter} />}
 
+      {loading && (
+        <div className="h-[2px] w-full flex-shrink-0 overflow-hidden bg-[var(--sb-hover)]">
+          <div className="h-full w-1/3 animate-[loader-slide_1.1s_ease-in-out_infinite] bg-[var(--sb-accent)]" />
+          <style>{`@keyframes loader-slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(300%); } }`}</style>
+        </div>
+      )}
+      
       <SummaryBar
         count={summaryCount}
         totalArea={summaryArea}
@@ -2009,7 +2026,7 @@ function SheetsTable({
           {(onViewSheet || onEditSheet) && <Th>Actions</Th>}
         </tr>
       </thead>
-      <tbody>
+      <tbody className="uppercase">
         {groups.map((g, i) => {
           const isChecked = colorSelectedKeys.has(g.key);
           const baseBg = isChecked
@@ -2281,7 +2298,7 @@ function LotsTable({
           {canEditAny && <Th>Actions</Th>}
         </tr>
       </thead>
-      <tbody>
+      <tbody className="uppercase">
         {features.map((f, i) => {
           const id = String(f.id);
           const isSelected = selectedId != null && id === String(selectedId);

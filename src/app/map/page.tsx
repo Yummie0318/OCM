@@ -192,7 +192,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Menu, ChevronDown, ChevronUp, Table2, Sun, Map as MapIcon, Moon, Satellite, Square } from "lucide-react";
+import { Menu, ChevronDown, ChevronUp, Table2, Sun, Map as MapIcon, Moon, Satellite, Square, Loader2 } from "lucide-react";
 import Sidebar from "@/components/map/Sidebar";
 import MapCanvas, { BASEMAPS, type BasemapId } from "@/components/map/MapCanvas";
 import AttributeTable, {
@@ -1989,9 +1989,10 @@ function MapViewerPageInner() {
 
           {isLoading && (
             <div
-              className="absolute right-3 top-3 rounded-lg px-3 py-1.5 text-[13px] shadow-md"
-              style={{ background: theme.bgElevated, color: theme.text }}
+              className="absolute right-14 top-3 z-[15] flex items-center gap-2 rounded-full px-3 py-1.5 text-[12.5px] font-medium shadow-md"
+              style={{ background: theme.bgElevated, color: theme.text, border: `1px solid ${theme.border}` }}
             >
+              <Loader2 size={14} className="animate-spin" style={{ color: theme.accent }} />
               Loading lots…
             </div>
           )}
@@ -2100,6 +2101,7 @@ function MapViewerPageInner() {
                 ) : (
                 <AttributeTable
                   features={tableFeatures}
+                  loading={isLoading}
                   onRowClick={selectFeatureFromTable}
                   selectedId={selectedId}
                   totalCount={tableSummary.count}
