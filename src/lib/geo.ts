@@ -65,6 +65,10 @@ export interface LotFeature {
     // no rule at either level.
     classification: "RFPA" | "FPA" | null;
     classificationThreshold: number | null;
+    // True for road/boundary/foreshore/remaining-portion/canal/public-land
+    // lots. These are not titled, so they are excluded from lot counts and
+    // total area on the sheets list. Optional for client-only features.
+    isNonTitled?: boolean;
     // Leading letter code parsed from survey_no (e.g. "CSD-AF-02-015244"
     // -> "CSD", "Ccs-(af)-02-001378" -> "CCS"), derived the same way as
     // PLAN_PREFIX_SQL in both route.ts files (uppercased, substring before

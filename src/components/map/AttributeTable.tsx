@@ -22,6 +22,9 @@ import {
   Loader2,
   Plus,
   Pencil,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpDown,
 } from "lucide-react";  
 
 const COLOR_PRESETS: { label: string; value: string }[] = [
@@ -239,6 +242,8 @@ interface SheetGroup {
   hasMissingSurveyNo: boolean;
   lots: LotFeature[];
   totalArea: number;
+    titledCount: number;
+  titledArea: number;
 }
 
 const LOT_COLUMNS = [
@@ -1315,6 +1320,7 @@ export default function AttributeTable({
       const sheetId = toSheetId(f.properties.sheetId);
       const key = sheetId != null ? `id:${sheetId}` : `no:${f.properties.sheetNo ?? "unsheeted"}`;
       const area = Number(f.properties.areaSqm) || 0;
+            const nonTitled = f.properties.isNonTitled === true;
       const existing = map.get(key);
       const rawSurvey = f.properties.surveyNo;
       const surveyStr =
@@ -1328,6 +1334,10 @@ export default function AttributeTable({
       if (existing) {
         existing.lots.push(f);
         existing.totalArea += area;
+        if (!nonTitled) {
+          existing.titledCount += 1;
+          existing.titledArea += area;
+        }
         if (!existing.surveyNo && surveyStr) existing.surveyNo = surveyStr;
         if (!existing.dateSurveyed && dateStr) existing.dateSurveyed = dateStr;
         if (!dateStr) existing.hasMissingDate = true;
@@ -1357,6 +1367,8 @@ export default function AttributeTable({
           hasMissingSurveyNo: !surveyStr,
           lots: [f],
           totalArea: area,
+          titledCount: nonTitled ? 0 : 1,
+          titledArea: nonTitled ? 0 : area,
         });
       }
     }
@@ -1477,12 +1489,12 @@ export default function AttributeTable({
   const summaryCount = isSearching
     ? searchResults.lots.length
     : expandedSheet
-      ? expandedSheet.lots.length
+      ? expandedSheet.titledCount
       : totalCount ?? features.length;
   const summaryArea = isSearching
     ? searchResults.totalArea
     : expandedSheet
-      ? expandedSheet.totalArea
+      ? expandedSheet.titledArea
       : totalArea ?? features.reduce((sum, f) => sum + (Number(f.properties.areaSqm) || 0), 0);
 
   if (features.length === 0) {
@@ -1536,7 +1548,7 @@ export default function AttributeTable({
           <style>{`@keyframes loader-slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(300%); } }`}</style>
         </div>
       )}
-      
+
       <SummaryBar
         count={summaryCount}
         totalArea={summaryArea}
@@ -1943,6 +1955,83 @@ export function Th({ children, numeric }: { children: React.ReactNode; numeric?:
   );
 }
 
+type SortDir = "asc" | "desc";
+type SortState = { key: string; dir: SortDir } | null;
+
+// Click cycle: asc -> desc -> no sort.
+function nextSort(prev: SortState, key: string): SortState {
+  if (!prev || prev.key !== key) return { key, dir: "asc" };
+  if (prev.dir === "asc") return { key, dir: "desc" };
+  return null;
+}
+
+// Empty values always sink to the bottom, in both directions.
+// Strings use natural ordering, so "Lot 2" comes before "Lot 10".
+function compareSortValues(
+  a: string | number | null | undefined,
+  b: string | number | null | undefined,
+  dir: SortDir
+): number {
+  const aEmpty = a == null || a === "";
+  const bEmpty = b == null || b === "";
+  if (aEmpty && bEmpty) return 0;
+  if (aEmpty) return 1;
+  if (bEmpty) return -1;
+  const result =
+    typeof a === "number" && typeof b === "number"
+      ? a - b
+      : String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
+  return dir === "asc" ? result : -result;
+}
+
+function dateToTime(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const t = new Date(value).getTime();
+  return Number.isNaN(t) ? null : t;
+}
+
+function SortableTh({
+  children,
+  sortKey,
+  sort,
+  onSort,
+  numeric,
+}: {
+  children: React.ReactNode;
+  sortKey: string;
+  sort: SortState;
+  onSort: (key: string) => void;
+  numeric?: boolean;
+}) {
+  const active = sort?.key === sortKey;
+  const Icon = !active ? ArrowUpDown : sort!.dir === "asc" ? ArrowUp : ArrowDown;
+  return (
+    <th
+      className={`sticky top-0 z-10 whitespace-nowrap px-2.5 py-[7px] font-semibold uppercase backdrop-blur ${
+        numeric ? "text-right" : "text-left"
+      }`}
+      style={{
+        background: "color-mix(in srgb, var(--sb-hover) 92%, transparent)",
+        borderBottom: `1px solid ${HAIRLINE}`,
+        fontSize: "10px",
+        letterSpacing: "0.05em",
+        color: active ? "var(--sb-accent-text)" : "var(--sb-text-muted)",
+      }}
+      aria-sort={active ? (sort!.dir === "asc" ? "ascending" : "descending") : "none"}
+    >
+      <button
+        type="button"
+        onClick={() => onSort(sortKey)}
+        className="inline-flex items-center gap-1 border-0 bg-transparent p-0 font-semibold uppercase transition-colors hover:text-[var(--sb-text)]"
+        style={{ fontSize: "inherit", letterSpacing: "inherit", color: "inherit" }}
+      >
+        {children}
+        <Icon size={10} style={{ opacity: active ? 1 : 0.45 }} />
+      </button>
+    </th>
+  );
+}
+
 const SURVEY_CLASS_OPTIONS: SelectOption[] = [
   { value: "admin", label: "Admin" },
   { value: "private", label: "Private" },
@@ -1987,6 +2076,27 @@ function SheetsTable({
 }) {
   const allSelected = groups.length > 0 && groups.every((g) => colorSelectedKeys.has(g.key));
 
+    const [sort, setSort] = useState<SortState>(null);
+
+  const sortedGroups = useMemo(() => {
+    if (!sort) return groups;
+    const valueOf = (g: SheetGroup): string | number | null => {
+      switch (sort.key) {
+        case "sheetNo":
+          return g.sheetNo;
+        case "municipality":
+          return g.municipality;
+        case "dateSurveyed":
+          return dateToTime(g.dateSurveyed);
+        case "dateApproved":
+          return dateToTime(g.dateApproved);
+        default:
+          return null;
+      }
+    };
+    return [...groups].sort((a, b) => compareSortValues(valueOf(a), valueOf(b), sort.dir));
+  }, [groups, sort]);
+
   // MOBILE PASS (scroll fix): horizontal scrolling is now owned by the
   // grandparent wrapper in AttributeTable, so this no longer wraps itself
   // in its own `overflow-x-auto` div — that second scroll region was what
@@ -2010,15 +2120,23 @@ function SheetsTable({
           </th>
           
           <Th>Color</Th>
-          <Th>Sheet No.</Th>
-          <Th>Municipality</Th>
+          <SortableTh sortKey="sheetNo" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))}>
+            Sheet No.
+          </SortableTh>
+          <SortableTh sortKey="municipality" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))}>
+            Municipality
+          </SortableTh>
           <Th>Province</Th>
           <Th>Plan</Th>
           <Th>Documents</Th>
           <Th>Survey No.</Th>
           <Th>Survey Class</Th>
-          <Th>Date Surveyed</Th>
-          <Th>Date Approved</Th>
+          <SortableTh sortKey="dateSurveyed" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))}>
+            Date Surveyed
+          </SortableTh>
+          <SortableTh sortKey="dateApproved" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))}>
+            Date Approved
+          </SortableTh>
           <Th numeric>Lots</Th>
           <Th>Classification</Th>
           <Th numeric>Total Area (sq.m.)</Th>
@@ -2027,7 +2145,7 @@ function SheetsTable({
         </tr>
       </thead>
       <tbody className="uppercase">
-        {groups.map((g, i) => {
+        {sortedGroups.map((g, i) => {
           const isChecked = colorSelectedKeys.has(g.key);
           const baseBg = isChecked
             ? "var(--sb-accent-bg)"
@@ -2167,7 +2285,7 @@ function SheetsTable({
               <td className="whitespace-nowrap px-2.5 py-[6px] text-[var(--sb-text-muted)]">
                 {formatDate(g.dateApproved)}
               </td>
-              <td className="px-2.5 py-[6px] text-right tabular-nums text-[var(--sb-text-muted)]">{g.lots.length}</td>
+              <td className="px-2.5 py-[6px] text-right tabular-nums text-[var(--sb-text-muted)]">{g.titledCount}</td>
                 <td className="px-2.5 py-[6px]">
                 {g.rfpaCount + g.fpaCount === 0 ? (
                   <span className="text-[var(--sb-text-muted)]">—</span>
@@ -2179,7 +2297,7 @@ function SheetsTable({
                 )}
               </td>
               <td className="px-2.5 py-[6px] text-right tabular-nums text-[var(--sb-text-muted)]">
-                {formatArea(g.totalArea)}
+                {formatArea(g.titledArea)}
               </td>
               <td className="max-w-[120px] px-2.5 py-[6px] text-[var(--sb-text-muted)]">
                 <span className="block max-w-[120px] truncate" title={g.encodedBy || ""}>
@@ -2262,6 +2380,32 @@ function LotsTable({
 
   const rowRefs = useRef<Record<string, HTMLTableRowElement | null>>({});
 
+    const [sort, setSort] = useState<SortState>(null);
+
+  const LOT_SORT_KEYS: Record<string, string> = {
+    "Lot No.": "lotNo",
+    Owner: "owner",
+    Classification: "classification",
+  };
+
+  const sortedFeatures = useMemo(() => {
+    if (!sort) return features;
+    const valueOf = (f: LotFeature): string | null => {
+      const p = f.properties as any;
+      switch (sort.key) {
+        case "lotNo":
+          return p.lotNo != null ? String(p.lotNo) : null;
+        case "owner":
+          return p.owner ?? null;
+        case "classification":
+          return p.classification ? String(p.classification).toUpperCase() : null;
+        default:
+          return null;
+      }
+    };
+    return [...features].sort((a, b) => compareSortValues(valueOf(a), valueOf(b), sort.dir));
+  }, [features, sort]);
+
   useEffect(() => {
     if (selectedId == null) return;
     const el = rowRefs.current[String(selectedId)];
@@ -2290,16 +2434,27 @@ function LotsTable({
               <Checkbox checked={allVisibleSelected} onChange={onToggleColorSelectAll} />
             </Tooltip>
           </th>
-          {columns.map((h) => (
-            <Th key={h} numeric={NUMERIC_COLUMNS.has(h)}>
-              {h}
-            </Th>
-          ))}
+          {columns.map((h) =>
+            LOT_SORT_KEYS[h] ? (
+              <SortableTh
+                key={h}
+                sortKey={LOT_SORT_KEYS[h]}
+                sort={sort}
+                onSort={(k) => setSort((p) => nextSort(p, k))}
+              >
+                {h}
+              </SortableTh>
+            ) : (
+              <Th key={h} numeric={NUMERIC_COLUMNS.has(h)}>
+                {h}
+              </Th>
+            )
+          )}
           {canEditAny && <Th>Actions</Th>}
         </tr>
       </thead>
       <tbody className="uppercase">
-        {features.map((f, i) => {
+        {sortedFeatures.map((f, i) => {
           const id = String(f.id);
           const isSelected = selectedId != null && id === String(selectedId);
           const isColorChecked = colorSelectedIds.has(id);

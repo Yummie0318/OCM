@@ -149,7 +149,20 @@ type ClassificationCode = (typeof VALID_CLASSIFICATIONS)[number];
 // manually since the two routes don't currently share a query-builder
 // module. If a shared lib/sql helpers file gets introduced later, this is
 // the first thing to hoist into it.
+// Lots NOT part of titling: no RFPA, no FPA.
+const NON_TITLED_RE =
+  "\\m(EXISTING ROAD|ROAD|BOUNDARY|BDRY|BRDY|BNDRY|FORESHORE|REMAINING PORTION|IRRIGATION CANAL|CANAL|PUBLIC LAND)\\M";
+
+// Special patents (public or private): always RFPA.
+const SPECIAL_PATENT_RE =
+  "\\m(LGU|MUNICIPALITY OF|CITY OF|PROVINCE OF|BARANGAY|BRGY|CEMETERY|SCHOOL|UNIVERSITY|COLLEGE|CHURCH|CHAPEL|LANDFILL|MILITARY|PUBLIC MARKET|PLAZA|HOSPITAL)\\M";
+
+// Owner + lot text only. Sheet name is deliberately NOT included.
+const LOT_TEXT_SQL = `UPPER(CONCAT_WS(' ', l.owner_given_name, l.owner_surname, l.lot_no))`;
+
 const CLASSIFICATION_CASE_SQL = `CASE
+  WHEN ${LOT_TEXT_SQL} ~ '${NON_TITLED_RE}' THEN NULL
+  WHEN ${LOT_TEXT_SQL} ~ '${SPECIAL_PATENT_RE}' THEN 'RFPA'
   WHEN get_rfpa_threshold(l.municipality_id) IS NULL THEN NULL
   WHEN l.area_sqm <= get_rfpa_threshold(l.municipality_id) THEN 'RFPA'
   ELSE 'FPA'
@@ -454,11 +467,13 @@ export async function GET(request: Request) {
       eu.username AS encoded_by_username,
       cen.id AS cenro_id,
       cen.name AS cenro_name,
-      get_rfpa_threshold(l.municipality_id) AS classification_threshold,
       CASE
-        WHEN get_rfpa_threshold(l.municipality_id) IS NULL THEN NULL
-        ELSE ${CLASSIFICATION_CASE_SQL}
-      END AS classification,
+        WHEN ${LOT_TEXT_SQL} ~ '${NON_TITLED_RE}' THEN NULL
+        WHEN ${LOT_TEXT_SQL} ~ '${SPECIAL_PATENT_RE}' THEN NULL
+        ELSE get_rfpa_threshold(l.municipality_id)
+      END AS classification_threshold,
+      ${CLASSIFICATION_CASE_SQL} AS classification,
+      (${LOT_TEXT_SQL} ~ '${NON_TITLED_RE}') AS is_non_titled,
       ${PLAN_PREFIX_SQL} AS plan_prefix
     FROM lots l
     LEFT JOIN lot_sheets ls ON ls.id = l.lot_sheet_id
@@ -510,6 +525,7 @@ export async function GET(request: Request) {
       cenro: row.cenro_name,
       classification: row.classification,
       classificationThreshold: row.classification_threshold,
+            isNonTitled: row.is_non_titled === true,
       planPrefix: row.plan_prefix,
     },
   }));

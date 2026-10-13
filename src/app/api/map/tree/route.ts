@@ -95,7 +95,24 @@ type ClassificationCode = (typeof VALID_CLASSIFICATIONS)[number];
 // get_rfpa_threshold() and are excluded via the NOT NULL guard added
 // alongside every use of this expression, rather than silently landing in
 // either bucket.
-const CLASSIFICATION_CASE_SQL = `CASE WHEN l.area_sqm <= get_rfpa_threshold(l.municipality_id) THEN 'RFPA' ELSE 'FPA' END`;
+// Lots NOT part of titling: no RFPA, no FPA. Keep identical to lots/route.ts.
+const NON_TITLED_RE =
+  "\\m(EXISTING ROAD|ROAD|BOUNDARY|BDRY|BRDY|BNDRY|FORESHORE|REMAINING PORTION|IRRIGATION CANAL|CANAL|PUBLIC LAND)\\M";
+
+// Special patents (public or private): always RFPA. Keep identical to lots/route.ts.
+const SPECIAL_PATENT_RE =
+  "\\m(LGU|MUNICIPALITY OF|CITY OF|PROVINCE OF|BARANGAY|BRGY|CEMETERY|SCHOOL|UNIVERSITY|COLLEGE|CHURCH|CHAPEL|LANDFILL|MILITARY|PUBLIC MARKET|PLAZA|HOSPITAL)\\M";
+
+// Owner + lot text only. Sheet name is deliberately NOT included.
+const LOT_TEXT_SQL = `UPPER(CONCAT_WS(' ', l.owner_given_name, l.owner_surname, l.lot_no))`;
+
+const CLASSIFICATION_CASE_SQL = `CASE
+  WHEN ${LOT_TEXT_SQL} ~ '${NON_TITLED_RE}' THEN NULL
+  WHEN ${LOT_TEXT_SQL} ~ '${SPECIAL_PATENT_RE}' THEN 'RFPA'
+  WHEN get_rfpa_threshold(l.municipality_id) IS NULL THEN NULL
+  WHEN l.area_sqm <= get_rfpa_threshold(l.municipality_id) THEN 'RFPA'
+  ELSE 'FPA'
+END`;
 
 // Plan/survey-number prefix (CSD, CCS, CSC, CSF, ...) -- not a real column,
 // derived from the leading letters of survey_no (e.g. "CSD-AF-02-015244"
@@ -342,6 +359,9 @@ export async function GET(request: Request) {
     }
 
     let sql: string;
+    // Roads, boundary, foreshore, etc. are not titled lots, so they are
+    // not counted in any facet list or count.
+    conditions.push(`NOT (${LOT_TEXT_SQL} ~ '${NON_TITLED_RE}')`);
     if (target === "cenros") {
       conditions.push("c.id IS NOT NULL");
       sql = `
@@ -413,7 +433,7 @@ export async function GET(request: Request) {
       // filter every other target. Lots whose municipality has no rule at
       // either level (get_rfpa_threshold() IS NULL) are excluded rather
       // than falling into either bucket.
-      conditions.push("get_rfpa_threshold(l.municipality_id) IS NOT NULL");
+      conditions.push(`(${CLASSIFICATION_CASE_SQL}) IS NOT NULL`);
       sql = `
         SELECT cls AS id, cls AS label, COUNT(*)::int AS count
         FROM (
