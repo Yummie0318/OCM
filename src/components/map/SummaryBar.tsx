@@ -53,13 +53,15 @@ interface Props {
   hasError?: boolean;
   scope?: string;
   rightSlot?: ReactNode;
+  /** When given, replaces the "X lots · Y sq.m." text on the left. */
+  leftSlot?: ReactNode;
 }
 
 function formatArea(sqm: number): string {
   return sqm.toLocaleString(undefined, { maximumFractionDigits: 1 }) + " sq.m.";
 }
 
-export default function SummaryBar({ count, totalArea, truncated, hasError, scope, rightSlot }: Props) {
+export default function SummaryBar({ count, totalArea, truncated, hasError, scope, rightSlot, leftSlot }: Props) {
   const { theme } = useSidebarTheme();
 
   const hairline = `color-mix(in srgb, ${theme.border} 70%, transparent)`;
@@ -72,6 +74,9 @@ export default function SummaryBar({ count, totalArea, truncated, hasError, scop
         background: theme.bgElevated,
       }}
     >
+      {leftSlot ? (
+        <div className="min-w-0 flex-1">{leftSlot}</div>
+      ) : (
       <span
         className="min-w-0 flex-shrink-0 truncate tabular-nums text-[12px] font-semibold"
         style={{ color: theme.text }}
@@ -83,7 +88,7 @@ export default function SummaryBar({ count, totalArea, truncated, hasError, scop
           {formatArea(totalArea)} total{scope ? ` ${scope}` : ""}
         </span>
       </span>
-
+      )}
       <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:gap-2.5">
         {(truncated || hasError) && (
           <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">

@@ -2076,10 +2076,13 @@ function MapViewerPageInner() {
                 Attribute Table
               </span>
               <span
-                className="flex h-[18px] min-w-[18px] flex-shrink-0 items-center justify-center rounded-full px-1 text-[10px] font-bold"
-                style={{ background: theme.border, color: theme.textMuted }}
+                className="flex h-[20px] flex-shrink-0 items-center gap-1.5 rounded-full px-2.5 text-[11px] font-semibold tabular-nums"
+                style={{ background: theme.border, color: theme.text }}
               >
-                {tableSummary.count}
+                {tableSummary.count.toLocaleString()} lot{tableSummary.count === 1 ? "" : "s"}
+                <span className="hidden sm:inline" style={{ color: theme.textMuted }}>
+                  · {tableSummary.totalArea.toLocaleString(undefined, { maximumFractionDigits: 1 })} sq.m.
+                </span>
               </span>
               <span className="ml-auto flex-shrink-0" style={{ color: theme.textFaint }}>
                 {tableExpanded ? <ChevronDown size={16} /> : <ChevronUp size={16} />}

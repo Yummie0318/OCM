@@ -613,6 +613,7 @@ export default function MapCanvas({
   const onPolygonClickRef = useRef(onPolygonClick);
   onPolygonClickRef.current = onPolygonClick;
 
+
   // Create the map once.
   useEffect(() => {
     let cancelled = false;
@@ -983,6 +984,7 @@ export default function MapCanvas({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [borderColors]);
   
+
   // Highlight whichever lot is currently selected (e.g. via search, a map
   // click, or a table row click).
   useEffect(() => {
@@ -1083,5 +1085,5 @@ export default function MapCanvas({
     }
   }, [blankColor]);
 
-  return <div ref={containerRef} style={{ width: "100%", height: "100%", position: "relative" }} />;
+    return <div ref={containerRef} style={{ width: "100%", height: "100%", position: "relative" }} />;
 }

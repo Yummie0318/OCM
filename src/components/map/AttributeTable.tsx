@@ -25,6 +25,7 @@ import {
   ArrowUp,
   ArrowDown,
   ArrowUpDown,
+  Eraser,
 } from "lucide-react";  
 
 const COLOR_PRESETS: { label: string; value: string }[] = [
@@ -244,6 +245,8 @@ interface SheetGroup {
   totalArea: number;
     titledCount: number;
   titledArea: number;
+  patentedCount: number;
+  unpatentedCount: number;
 }
 
 const LOT_COLUMNS = [
@@ -353,6 +356,23 @@ function ClassificationBadge({ value, count }: { value: "RFPA" | "FPA"; count?: 
     >
       {value}
       {count != null && <span className="tabular-nums">{count}</span>}
+    </span>
+  );
+}
+
+// Titled (has a patent no.) / Untitled count pill for the Sheets table.
+function StatusBadge({ value, count }: { value: "Titled" | "Untitled"; count: number }) {
+  const isTitled = value === "Titled";
+  return (
+    <span
+      className="inline-flex items-center gap-1 rounded-full px-2 py-[2px] text-[10px] font-bold uppercase tracking-wide"
+      style={{
+        background: isTitled ? "rgba(34, 197, 94, 0.14)" : "rgba(148, 163, 184, 0.18)",
+        color: isTitled ? "#16a34a" : "#64748b",
+      }}
+    >
+      {value}
+      <span className="tabular-nums">{count}</span>
     </span>
   );
 }
@@ -1168,6 +1188,130 @@ export function ColorToolbar({
   );
 }
 
+const chipBase =
+  "inline-flex h-[24px] flex-shrink-0 items-center gap-1 rounded-full border-0 px-2.5 py-0 text-[11px] font-semibold leading-none transition-colors duration-100 disabled:cursor-not-allowed disabled:opacity-40";
+
+// Selection + status-color toolbar shown in the summary bar.
+function SelectionToolbar({
+  selectedCount,
+  idleLabel,
+  onApplyColor,
+  onDeselectAll,
+  titledCount,
+  titledActive,
+  titledColor,
+  onToggleTitled,
+  onTitledColorChange,
+}: {
+  selectedCount: number;
+  idleLabel: string;
+  onApplyColor: (color: string | null) => void;
+  onDeselectAll: () => void;
+  titledCount: number;
+  titledActive: boolean;
+  titledColor: string;
+  onToggleTitled: () => void;
+  onTitledColorChange: (color: string) => void;
+}) {
+  const enabled = selectedCount > 0;
+  const divider = <span className="h-4 w-px flex-shrink-0" style={{ background: HAIRLINE }} />;
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
+      {/* Swatches apply to the checked rows */}
+      <div
+        className="flex items-center gap-1.5 transition-opacity"
+        style={{ opacity: enabled ? 1 : 0.35, pointerEvents: enabled ? "auto" : "none" }}
+      >
+        {COLOR_PRESETS.map((c) => (
+          <button
+            key={c.value}
+            type="button"
+            aria-label={`Apply ${c.value}`}
+            onClick={() => onApplyColor(c.value)}
+            className="h-[18px] w-[18px] flex-shrink-0 rounded-full border-0 p-0 shadow-sm ring-1 ring-inset ring-black/10 transition-transform hover:scale-110 active:scale-95"
+            style={{ background: c.value }}
+          />
+        ))}
+        <span
+          title="Custom color"
+          className="relative flex h-[18px] w-[18px] flex-shrink-0 cursor-pointer items-center justify-center rounded-full border border-dashed border-[var(--sb-text-faint)] text-[var(--sb-text-faint)]"
+        >
+          <Palette size={9} />
+          <input
+            type="color"
+            onChange={(e) => onApplyColor(e.target.value)}
+            className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+          />
+        </span>
+      </div>
+
+      <button
+        type="button"
+        disabled={!enabled}
+        onClick={() => onApplyColor(null)}
+        className={`${chipBase} bg-[var(--sb-hover)] text-[var(--sb-text-muted)] hover:text-[var(--sb-text)]`}
+      >
+        <Eraser size={11} />
+        Clear
+      </button>
+      <button
+        type="button"
+        disabled={!enabled}
+        onClick={onDeselectAll}
+        className={`${chipBase} bg-[var(--sb-hover)] text-[var(--sb-text-muted)] hover:text-[var(--sb-text)]`}
+      >
+        <X size={11} />
+        Deselect
+      </button>
+
+      {divider}
+
+      {/* Titled = has a Patent No. Works on everything shown, not just checked rows. */}
+      <div className="inline-flex items-center gap-1.5">
+        <button
+          type="button"
+          disabled={titledCount === 0}
+          onClick={onToggleTitled}
+          title={titledActive ? "Remove the titled color" : "Color every titled lot (has a Patent No.)"}
+          className={`${chipBase} ${titledActive ? "" : "bg-[var(--sb-hover)] text-[var(--sb-text)] hover:opacity-80"}`}
+          style={titledActive ? { background: titledColor, color: "#ffffff" } : undefined}
+        >
+          <Check size={11} strokeWidth={2.5} />
+          {titledActive ? "Titled colored" : "Color titled"}
+          <span className="tabular-nums opacity-70">{titledCount}</span>
+        </button>
+        <span
+          title={titledCount === 0 ? "No titled lots to color" : "Titled color"}
+          className={`relative h-[20px] w-[20px] flex-shrink-0 rounded-full ring-1 ring-inset ring-black/10 ${
+            titledCount === 0 ? "cursor-not-allowed" : "cursor-pointer"
+          }`}
+          style={{ background: titledColor, opacity: titledCount === 0 ? 0.4 : 1 }}
+        >
+          <input
+            type="color"
+            value={titledColor}
+            disabled={titledCount === 0}
+            onChange={(e) => onTitledColorChange(e.target.value)}
+            className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
+          />
+        </span>
+      </div>
+
+      {/* Only appears while something is checked, after the Titled controls. */}
+      {enabled && (
+        <span
+          className="inline-flex h-[24px] items-center whitespace-nowrap rounded-full px-2.5 text-[11px] font-semibold tabular-nums"
+          style={{ background: "var(--sb-accent-bg)", color: "var(--sb-accent-text)" }}
+        >
+          {selectedCount} selected
+        </span>
+      )}
+    </div>
+  );
+}
+
+
 // Lets you set (or clear) the color for every lot on a sheet in one
 // click, from the sheets list — without drilling into the sheet and
 // multi-selecting every lot individually. Shows a filled swatch if every
@@ -1185,15 +1329,14 @@ export function ColorToolbar({
 // its own row regardless of what's checked elsewhere.
 function SheetColorSwatch({
   lotIds,
-  currentColor,
-  mixed,
+  colors,
   onApplyColor,
 }: {
   lotIds: Array<string | number>;
-  currentColor: string | null;
-  mixed: boolean;
+  colors: string[];
   onApplyColor: (lotIds: Array<string | number>, color: string | null) => void;
 }) {
+  const mixed = colors.length > 1;
   const [open, setOpen] = useState(false);
 
   function apply(color: string | null) {
@@ -1206,20 +1349,36 @@ function SheetColorSwatch({
       <Tooltip
         label={
           mixed
-            ? "Lots have different colors — click to set one color for all"
+            ? `${colors.length} colors on this sheet. Click to set one color for all`
             : "Color every lot on this sheet"
         }
       >
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
-          className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full ring-1 ring-inset ring-black/10 transition-transform hover:scale-110"
-          style={{
-            background: currentColor && !mixed ? currentColor : "transparent",
-            border: !currentColor || mixed ? "1.5px dashed var(--sb-text-faint)" : undefined,
-          }}
+          className="flex h-4 flex-shrink-0 items-center rounded-full border-0 bg-transparent p-0 transition-transform hover:scale-110"
         >
-          {mixed && <span className="h-2 w-2 rounded-full" style={{ background: "var(--sb-text-faint)" }} />}
+          {colors.length === 0 ? (
+            <span
+              className="h-4 w-4 rounded-full"
+              style={{ border: "1.5px dashed var(--sb-text-faint)" }}
+            />
+          ) : (
+            <span className="flex items-center">
+              {colors.slice(0, 3).map((c, i) => (
+                <span
+                  key={c}
+                  className="h-4 w-4 rounded-full ring-2 ring-[var(--sb-bg)]"
+                  style={{ background: c, marginLeft: i === 0 ? 0 : -6 }}
+                />
+              ))}
+              {colors.length > 3 && (
+                <span className="ml-1 text-[9px] font-bold tabular-nums text-[var(--sb-text-muted)]">
+                  +{colors.length - 3}
+                </span>
+              )}
+            </span>
+          )}
         </button>
       </Tooltip>
 
@@ -1320,7 +1479,9 @@ export default function AttributeTable({
       const sheetId = toSheetId(f.properties.sheetId);
       const key = sheetId != null ? `id:${sheetId}` : `no:${f.properties.sheetNo ?? "unsheeted"}`;
       const area = Number(f.properties.areaSqm) || 0;
-            const nonTitled = f.properties.isNonTitled === true;
+      const nonTitled = f.properties.isNonTitled === true;
+      const rawPatent = (f.properties as any).patentNo;
+      const hasPatent = rawPatent != null && String(rawPatent).trim() !== "";
       const existing = map.get(key);
       const rawSurvey = f.properties.surveyNo;
       const surveyStr =
@@ -1337,6 +1498,8 @@ export default function AttributeTable({
         if (!nonTitled) {
           existing.titledCount += 1;
           existing.titledArea += area;
+          if (hasPatent) existing.patentedCount += 1;
+          else existing.unpatentedCount += 1;
         }
         if (!existing.surveyNo && surveyStr) existing.surveyNo = surveyStr;
         if (!existing.dateSurveyed && dateStr) existing.dateSurveyed = dateStr;
@@ -1369,6 +1532,8 @@ export default function AttributeTable({
           totalArea: area,
           titledCount: nonTitled ? 0 : 1,
           titledArea: nonTitled ? 0 : area,
+          patentedCount: !nonTitled && hasPatent ? 1 : 0,
+          unpatentedCount: !nonTitled && !hasPatent ? 1 : 0,
         });
       }
     }
@@ -1497,6 +1662,44 @@ export default function AttributeTable({
       ? expandedSheet.titledArea
       : totalArea ?? features.reduce((sum, f) => sum + (Number(f.properties.areaSqm) || 0), 0);
 
+      
+  // ---- Toolbar wiring (lot view vs. sheet view) ----
+  const inLotView = isSearching || !!expandedSheet;
+  const toolbarSelectedCount = inLotView ? colorSelectedIds.size : sheetColorSelectedKeys.size;
+  const toolbarApply = inLotView ? applyColor : applySheetColor;
+  const toolbarIdle = inLotView ? "Tap lots to color" : "Check sheets to color";
+  function toolbarDeselect() {
+    if (inLotView) setColorSelectedIds(new Set());
+    else setSheetColorSelectedKeys(new Set());
+  }
+
+  // ---- "Color titled": titled = has a Patent No. (same rule as the Status column) ----
+  const [titledColor, setTitledColor] = useState("#ef4444");
+  const scopeFeatures = searchResults ? searchResults.lots : expandedSheet ? expandedSheet.lots : features;
+  const titledIds = useMemo(
+    () =>
+      scopeFeatures
+        .filter((f) => {
+          const p = f.properties as any;
+          if (p.kind === "forest" || p.isNonTitled === true) return false;
+          return p.patentNo != null && String(p.patentNo).trim() !== "";
+        })
+        .map((f) => f.id),
+    [scopeFeatures]
+  );
+  const titledActive =
+    titledIds.length > 0 &&
+    titledIds.every((id) => lotColors?.[String(id)]?.toLowerCase() === titledColor.toLowerCase());
+
+  function toggleTitled() {
+    if (!onSetLotColors || titledIds.length === 0) return;
+    onSetLotColors(titledIds, titledActive ? null : titledColor);
+  }
+  function changeTitledColor(c: string) {
+    setTitledColor(c);
+    if (titledActive && onSetLotColors) onSetLotColors(titledIds, c);
+  }
+
   if (features.length === 0) {
     return (
       <div className={`${uiFont.className} flex h-full flex-col bg-[var(--sb-bg)]`} style={vars}>
@@ -1555,6 +1758,23 @@ export default function AttributeTable({
         truncated={isSearching || expandedSheet ? false : truncated}
         hasError={hasError}
         scope={isSearching ? "matching your search" : expandedSheet ? "on this sheet" : undefined}
+        leftSlot={
+          onSetLotColors ? (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+              <SelectionToolbar
+                selectedCount={toolbarSelectedCount}
+                idleLabel={toolbarIdle}
+                onApplyColor={toolbarApply}
+                onDeselectAll={toolbarDeselect}
+                titledCount={titledIds.length}
+                titledActive={titledActive}
+                titledColor={titledColor}
+                onToggleTitled={toggleTitled}
+                onTitledColorChange={changeTitledColor}
+              />
+            </div>
+          ) : undefined
+        }
         rightSlot={
           // MOBILE PASS: was a fixed w-[172px] that could overflow a narrow
           // viewport. Now fills the width it's given (full width on
@@ -1646,12 +1866,7 @@ export default function AttributeTable({
             )}
           </div>
 
-          <ColorToolbar
-            selectedCount={colorSelectedIds.size}
-            onApplyColor={applyColor}
-            onDeselectAll={() => setColorSelectedIds(new Set())}
-            idleLabel="Tap lots to color"
-          />
+
         </div>
       )}
 
@@ -1665,72 +1880,7 @@ export default function AttributeTable({
         sheetColorSelectedKeys) and what applying a color does
         (applySheetColor colors every lot on every checked sheet at once).
       */}
-      {!isSearching && !expandedSheet && sheetColorSelectedKeys.size > 0 && (
-        <div
-          className="flex flex-shrink-0 flex-wrap items-center gap-3 px-3 py-2"
-          style={{ borderBottom: `1px solid ${HAIRLINE}`, background: "var(--sb-hover)" }}
-        >
-          <ColorToolbar
-            selectedCount={sheetColorSelectedKeys.size}
-            onApplyColor={applySheetColor}
-            onDeselectAll={() => setSheetColorSelectedKeys(new Set())}
-            idleLabel="Check sheets to color"
-          />
-          {onBulkSetSurveyNo &&
-            sheetGroups
-              .filter((g) => sheetColorSelectedKeys.has(g.key))
-              .every((g) => !canEditRecord || canEditRecord(g.encodedBy)) && (
-            <BulkSurveyNoControl
-              sheetCount={sheetColorSelectedKeys.size}
-              onApply={(surveyNo, mode) =>
-                onBulkSetSurveyNo(
-                  sheetGroups
-                    .filter((g) => sheetColorSelectedKeys.has(g.key) && g.sheetId != null)
-                    .map((g) => g.sheetId as number),
-                  surveyNo,
-                  mode
-                )
-              }
-            />
-          )}
-          {onBulkSetDateSurveyed &&
-            sheetGroups
-              .filter((g) => sheetColorSelectedKeys.has(g.key))
-              .every((g) => !canEditRecord || canEditRecord(g.encodedBy)) && (
-              <BulkDateSurveyedControl
-                sheetCount={sheetColorSelectedKeys.size}
-                onApply={(date, mode) =>
-                  onBulkSetDateSurveyed(
-                    sheetGroups
-                      .filter((g) => sheetColorSelectedKeys.has(g.key) && g.sheetId != null)
-                      .map((g) => g.sheetId as number),
-                    date,
-                    mode
-                  )
-                }
-              />
-            )}
-          {onBulkSetDateApproved &&
-            sheetGroups
-              .filter((g) => sheetColorSelectedKeys.has(g.key))
-              .every((g) => !canEditRecord || canEditRecord(g.encodedBy)) && (
-              <BulkDateSurveyedControl
-                label="Set Date Approved"
-                noun="date approved"
-                sheetCount={sheetColorSelectedKeys.size}
-                onApply={(date, mode) =>
-                  onBulkSetDateApproved(
-                    sheetGroups
-                      .filter((g) => sheetColorSelectedKeys.has(g.key) && g.sheetId != null)
-                      .map((g) => g.sheetId as number),
-                    date,
-                    mode
-                  )
-                }
-              />
-            )}
-        </div>
-      )}
+
 
       {/*
         MOBILE PASS (scroll fix): previously this single div was
@@ -2138,6 +2288,7 @@ function SheetsTable({
             Date Approved
           </SortableTh>
           <Th numeric>Lots</Th>
+          <Th>Status</Th>
           <Th>Classification</Th>
           <Th numeric>Total Area (sq.m.)</Th>
           <Th>Encoded By</Th>
@@ -2181,8 +2332,7 @@ function SheetsTable({
                       return (
                         <SheetColorSwatch
                           lotIds={lotIds}
-                          currentColor={colorsOnSheet.length === 1 ? colorsOnSheet[0] : null}
-                          mixed={colorsOnSheet.length > 1}
+                          colors={colorsOnSheet}
                           onApplyColor={onSetLotColors}
                         />
                       );
@@ -2286,6 +2436,17 @@ function SheetsTable({
                 {formatDate(g.dateApproved)}
               </td>
               <td className="px-2.5 py-[6px] text-right tabular-nums text-[var(--sb-text-muted)]">{g.titledCount}</td>
+              <td className="px-2.5 py-[6px]">
+                {g.patentedCount + g.unpatentedCount === 0 ? (
+                  <span className="text-[var(--sb-text-muted)]">—</span>
+                ) : (
+                  <span className="inline-flex flex-wrap items-center gap-1">
+                    {g.patentedCount > 0 && <StatusBadge value="Titled" count={g.patentedCount} />}
+                    {g.unpatentedCount > 0 && <StatusBadge value="Untitled" count={g.unpatentedCount} />}
+                  </span>
+                )}
+              </td>
+
                 <td className="px-2.5 py-[6px]">
                 {g.rfpaCount + g.fpaCount === 0 ? (
                   <span className="text-[var(--sb-text-muted)]">—</span>
