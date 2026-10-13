@@ -647,7 +647,7 @@ export default function Sidebar({
     return (
       <div
         ref={compact ? undefined : accountRef}
-        className={`relative w-full flex-shrink-0 pt-2.5 ${compact ? "" : "mt-2.5"}`}
+        className={`relative w-full flex-shrink-0 pt-2.5 ${compact ? "flex justify-center" : "mt-2.5"}`}
         style={{ borderTop: `1px solid ${hairline}` }}
       >
         {accountMenuOpen && !compact && (
@@ -842,7 +842,10 @@ export default function Sidebar({
             full projection tree, so this just pins the sidebar open and
             jumps to the Layers tab, where the real "Project" button (see
             LayersPanel below) lives. */}
-        <Tooltip label="Project layers" side="right">
+        <Tooltip
+          label={activeCount > 0 ? `Project layers · ${activeCount} selected` : "Project layers"}
+          side="right"
+        >
           <button
             type="button"
             onClick={() => {
@@ -850,9 +853,17 @@ export default function Sidebar({
               onToggleCollapsed();
               setProjectionModalOpen(true);
             }}
-            className={`mt-1.5 ${iconBtnClass("lg")}`}
+            className={`relative mt-1.5 ${iconBtnClass("lg")}`}
           >
             <Filter size={16} />
+            {activeCount > 0 && (
+              <span
+                className="absolute -right-0.5 -top-0.5 flex h-[16px] min-w-[16px] items-center justify-center rounded-full px-1 text-[9px] font-bold tabular-nums"
+                style={{ background: theme.accent, color: theme.onAccent }}
+              >
+                {activeCount > 99 ? "99+" : activeCount}
+              </span>
+            )}
           </button>
         </Tooltip>
 
@@ -887,17 +898,6 @@ export default function Sidebar({
             );
           })}
         </div>
-
-        {activeCount > 0 && (
-          <Tooltip label={`${activeCount} layer${activeCount === 1 ? "" : "s"} selected`} side="right">
-            <div
-              className="mt-1.5 flex h-[22px] min-w-[22px] flex-shrink-0 items-center justify-center rounded-full px-1.5 text-[10.5px] font-bold tabular-nums"
-              style={{ background: theme.accent, color: theme.onAccent }}
-            >
-              {activeCount}
-            </div>
-          </Tooltip>
-        )}
 
         {/* Notification bell — sits just above the account footer, next
             to where the user's profile lives. */}
