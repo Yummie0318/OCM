@@ -38,6 +38,10 @@ export interface LotFeature {
     sheetNo: string | null;
     patentNo: string | null;
     remarks: string | null;
+    applicationNumber?: string | null;
+    serialNumber?: string | null;
+    investigatorId?: number | null;
+    investigator?: string | null;
     planUrl: string | null;
     // Was previously only read via `(f.properties as any).documentsUrl` in
     // AttributeTable.tsx even though the API already returned it — now

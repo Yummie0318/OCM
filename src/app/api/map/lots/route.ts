@@ -160,7 +160,17 @@ const SPECIAL_PATENT_RE =
 // Owner + lot text only. Sheet name is deliberately NOT included.
 const LOT_TEXT_SQL = `UPPER(CONCAT_WS(' ', l.owner_given_name, l.owner_surname, l.lot_no))`;
 
+// Application No. takes priority: "RFPA-..." -> RFPA, "FPA-..." -> FPA.
+// LIKE matches from the start of the string, so 'FPA-%' does not match
+// 'RFPA-...'. Anything else falls through to the existing rules below.
+const APP_NO_SQL = `UPPER(TRIM(l.application_number))`;
+const APP_IS_RFPA_SQL = `${APP_NO_SQL} LIKE 'RFPA-%'`;
+const APP_IS_FPA_SQL = `${APP_NO_SQL} LIKE 'FPA-%'`;
+const APP_HAS_CLASS_SQL = `(${APP_IS_RFPA_SQL} OR ${APP_IS_FPA_SQL})`;
+
 const CLASSIFICATION_CASE_SQL = `CASE
+  WHEN ${APP_IS_RFPA_SQL} THEN 'RFPA'
+  WHEN ${APP_IS_FPA_SQL} THEN 'FPA'
   WHEN ${LOT_TEXT_SQL} ~ '${NON_TITLED_RE}' THEN NULL
   WHEN ${LOT_TEXT_SQL} ~ '${SPECIAL_PATENT_RE}' THEN 'RFPA'
   WHEN get_rfpa_threshold(l.municipality_id) IS NULL THEN NULL
@@ -448,6 +458,8 @@ export async function GET(request: Request) {
       l.survey_no, to_char(l.date_surveyed, 'YYYY-MM-DD') AS date_surveyed,
       to_char(l.date_approved, 'YYYY-MM-DD') AS date_approved,
       l.area_sqm, l.patent_no, l.remarks,
+      l.application_number, l.serial_number, l.investigator_id,
+      inv.name AS investigator_name,
       ls.id AS sheet_id, ls.plan_url, ls.documents_url, ls.survey_class, ls.sheet_no,
       ST_AsGeoJSON(l.geom) AS geometry_json,
       COALESCE(cp.province_name, p.name) AS province_name,
@@ -468,12 +480,13 @@ export async function GET(request: Request) {
       cen.id AS cenro_id,
       cen.name AS cenro_name,
       CASE
+        WHEN ${APP_HAS_CLASS_SQL} THEN NULL
         WHEN ${LOT_TEXT_SQL} ~ '${NON_TITLED_RE}' THEN NULL
         WHEN ${LOT_TEXT_SQL} ~ '${SPECIAL_PATENT_RE}' THEN NULL
         ELSE get_rfpa_threshold(l.municipality_id)
       END AS classification_threshold,
       ${CLASSIFICATION_CASE_SQL} AS classification,
-      (${LOT_TEXT_SQL} ~ '${NON_TITLED_RE}') AS is_non_titled,
+      (${LOT_TEXT_SQL} ~ '${NON_TITLED_RE}' AND NOT ${APP_HAS_CLASS_SQL}) AS is_non_titled,
       ${PLAN_PREFIX_SQL} AS plan_prefix
     FROM lots l
     LEFT JOIN lot_sheets ls ON ls.id = l.lot_sheet_id
@@ -484,6 +497,7 @@ export async function GET(request: Request) {
     LEFT JOIN barangays b ON b.id = l.barangay_id
     LEFT JOIN municipalities bm ON bm.id = b.municipality_id
     LEFT JOIN surveyors s ON s.id = l.surveyor_id
+    LEFT JOIN investigators inv ON inv.id = l.investigator_id
     LEFT JOIN users eu ON eu.id = ls.created_by
     WHERE ${conditions.join(" AND ")}
     ORDER BY l.id
@@ -517,6 +531,10 @@ export async function GET(request: Request) {
       sheetNo: row.sheet_no,
       patentNo: row.patent_no,
       remarks: row.remarks,
+      applicationNumber: row.application_number,
+      serialNumber: row.serial_number,
+      investigatorId: row.investigator_id,
+      investigator: row.investigator_name,
       planUrl: row.plan_url,
       documentsUrl: row.documents_url,
       surveyClass: row.survey_class,

@@ -430,6 +430,7 @@ function MapViewerPageInner() {
   // waiting for its own 60s poll. Passed down to both <Sidebar />
   // instances as notificationsRefreshKey.
   const [notificationsRefreshKey, setNotificationsRefreshKey] = useState(0);
+    const [treeRefreshKey, setTreeRefreshKey] = useState(0);
 
   // Fetch the logged-in user once on mount. Failures are swallowed on
   // purpose -- if this fails, Sidebar just falls back to its own default
@@ -1081,6 +1082,130 @@ function MapViewerPageInner() {
     );
   }
 
+    // Admin / superadmin: archive a whole lot sheet (and its lots). POST
+  // /api/lot-sheets/[id]/archive moves it to the archive tables and removes
+  // it from the live tables, so drop it from everything loaded here too.
+  // AttributeTable shows the success/error toast, so none is shown here.
+  // Admin / superadmin: archive a whole lot sheet (and its lots).
+  async function handleArchiveSheet(sheetId: number) {
+    const res = await fetch(`/api/lot-sheets/${sheetId}/archive`, { method: "POST" });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || "Failed to archive lot sheet.");
+    }
+
+    setNotificationsRefreshKey(Date.now());
+    // Refreshes the sidebar tree counts and the Archive row's count.
+    setTreeRefreshKey(Date.now());
+
+    // Live copies only. The Archive layer's records are never matched here.
+    const isArchivedNow = (f: LotFeature) =>
+      Number(f.properties.sheetId) === sheetId && !(f.properties as any).archived;
+
+    // A layer that held nothing but this sheet would be left behind as an
+    // empty row in the Selected tab, so those layers are removed entirely.
+    const emptiedKeys = Object.entries(layerData)
+      .filter(([, feats]) => feats.length > 0 && feats.every(isArchivedNow))
+      .map(([key]) => key);
+
+    setLayerData((d) => {
+      const next: typeof d = {};
+      for (const [key, feats] of Object.entries(d)) {
+        if (emptiedKeys.includes(key)) continue;
+        next[key] = feats.filter((f) => !isArchivedNow(f));
+      }
+      // If the Archive layer is on the map it must now include this sheet,
+      // so drop it and let the fetch effect reload it.
+      delete next["archive:all"];
+      return next;
+    });
+
+    setActiveSelections((prev) => {
+      const next = { ...prev };
+      for (const key of emptiedKeys) delete next[key];
+      return next; // always a new object, which re-runs the fetch effect
+    });
+
+    if (emptiedKeys.length > 0) {
+      emptiedKeys.forEach((key) => toast.dismiss(`project:${key}`));
+      setLayerBorderColors((prev) => {
+        const next = { ...prev };
+        for (const key of emptiedKeys) delete next[key];
+        return next;
+      });
+    }
+
+    setSelectedFeature((f) => (f && isArchivedNow(f) ? null : f));
+    setSheetPreview((p) => (p && p.lots.some(isArchivedNow) ? null : p));
+  }
+
+    // Admin / superadmin: move an archived sheet (and its lots) back to the
+  // live tables. POST /api/lot-sheets/[id]/restore. The server re-checks
+  // the role and, for admins, that they encoded the sheet.
+  // AttributeTable shows the success/error toast, so none is shown here.
+  async function handleRestoreSheet(sheetId: number) {
+    const res = await fetch(`/api/lot-sheets/${sheetId}/restore`, { method: "POST" });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || "Failed to restore lot sheet.");
+    }
+
+    setNotificationsRefreshKey(Date.now());
+    // Refreshes the sidebar tree counts and the Archive row's count.
+    setTreeRefreshKey(Date.now());
+
+    // Drop the archived copies of this sheet from everything loaded.
+    const isRestoredArchived = (f: LotFeature) =>
+      Number(f.properties.sheetId) === sheetId && (f.properties as any).archived === true;
+
+    // The restored lot is back in the live tables, so any layer projected
+    // from a query (filter:, proj:, year:, search:, sheet:) may now include
+    // it. Drop their loaded data so the fetch effect reloads each one.
+    // Forest layers are unaffected. The archive layer just loses the lot.
+    setLayerData((d) => {
+      const next: typeof d = {};
+      for (const [key, feats] of Object.entries(d)) {
+        if (key.startsWith("forest:")) {
+          next[key] = feats;
+        } else if (key.startsWith("archive:")) {
+          next[key] = feats.filter((f) => !isRestoredArchived(f));
+        }
+        // every other key is left out on purpose, so it gets refetched
+      }
+      return next;
+    });
+    // New object so the fetch effect (which depends on activeSelections) re-runs.
+    setActiveSelections((prev) => ({ ...prev }));
+
+        // If that was the last archived sheet, drop the "Archive (all Archived)"
+    // selection so it disappears from the Selected tab, map and table.
+    try {
+      const s = await fetch("/api/map/archive?summary=1").then((r) => r.json());
+      if (s && s.lots === 0) {
+        toast.dismiss("project:archive:all");
+        setActiveSelections((prev) => {
+          if (!prev["archive:all"]) return prev;
+          const next = { ...prev };
+          delete next["archive:all"];
+          return next;
+        });
+        setLayerBorderColors((prev) => {
+          if (!("archive:all" in prev)) return prev;
+          const next = { ...prev };
+          delete next["archive:all"];
+          return next;
+        });
+      }
+    } catch {
+      // ignore, the sidebar check still covers it when the Layers tab is open
+    }
+
+    setSelectedFeature((f) => (f && isRestoredArchived(f) ? null : f));
+    setSheetPreview((p) => (p && p.lots.some(isRestoredArchived) ? null : p));
+  }
+
   // Superadmin: edit a single lot's attributes. PATCH /api/lots/[id], then
   // patch the returned values (including the server-recomputed plan prefix
   // and RFPA/FPA classification) onto that lot in every loaded layer.
@@ -1112,6 +1237,10 @@ function MapViewerPageInner() {
       areaSqm: lot.areaSqm,
       patentNo: lot.patentNo,
       remarks: lot.remarks,
+            applicationNumber: lot.applicationNumber,
+      serialNumber: lot.serialNumber,
+      investigatorId: lot.investigatorId,
+      investigator: lot.investigator,
       planPrefix: lot.planPrefix,
       classification: lot.classification,
     };
@@ -1617,13 +1746,18 @@ function MapViewerPageInner() {
         key.startsWith("filter:") ||
         key.startsWith("proj:") ||
         key.startsWith("year:") ||
-        key.startsWith("forest:");
+        key.startsWith("forest:") ||
+        key.startsWith("archive:");
       const toastId = `project:${key}`;
       if (isProjection) {
         toast.loading("Projecting layer…", { id: toastId, description: sel.label });
       }
 
-      const endpoint = key.startsWith("forest:") ? "/api/map/forest" : "/api/map/lots";
+      const endpoint = key.startsWith("forest:")
+        ? "/api/map/forest"
+        : key.startsWith("archive:")
+          ? "/api/map/archive"
+          : "/api/map/lots";
       fetch(`${endpoint}?${params}`)
         .then((r) => {
           if (!r.ok) throw new Error(`Request failed (${r.status})`);
@@ -1843,6 +1977,7 @@ function MapViewerPageInner() {
               activeTableKey={tableFilterKey}
               onActivityLogSelect={handleActivityLogSelect}
               notificationsRefreshKey={notificationsRefreshKey}
+                            municipalitiesRefreshKey={treeRefreshKey}
             />
           </div>
         </aside>
@@ -1893,6 +2028,7 @@ function MapViewerPageInner() {
                 activeTableKey={tableFilterKey}
                 onActivityLogSelect={handleActivityLogSelect}
                 notificationsRefreshKey={notificationsRefreshKey}
+                              municipalitiesRefreshKey={treeRefreshKey}
               />
             </div>
 
@@ -2019,8 +2155,17 @@ function MapViewerPageInner() {
             onBackToSheet={backToSheetPreview}
             onClose={closeDetail}
             canEditRecord={canEditRecord}
-            onSaveGeometry={isSuperAdmin || isAdmin ? handleSaveLotGeometry : undefined}
-            onSaveSheetGeometry={isSuperAdmin || isAdmin ? handleSaveSheetGeometry : undefined}
+            onSaveGeometry={
+              (isSuperAdmin || isAdmin) && !(selectedFeature?.properties as any)?.archived
+                ? handleSaveLotGeometry
+                : undefined
+            }
+            onSaveSheetGeometry={
+              (isSuperAdmin || isAdmin) &&
+              !sheetPreview?.lots.some((l) => (l.properties as any).archived)
+                ? handleSaveSheetGeometry
+                : undefined
+            }
             width={detailPanelWidth}
             isResizing={isDetailPanelResizing}
             onStartResize={startDetailPanelResize}
@@ -2122,6 +2267,8 @@ function MapViewerPageInner() {
                   onUpdateSurveyClass={canEditData ? handleUpdateSurveyClass : undefined}
                   onEditSheet={isSuperAdmin || isAdmin ? handleEditSheet : undefined}
                   onEditLot={isSuperAdmin || isAdmin ? handleEditLot : undefined}
+                  onArchiveSheet={isSuperAdmin || isAdmin ? handleArchiveSheet : undefined}
+                  onRestoreSheet={isSuperAdmin || isAdmin ? handleRestoreSheet : undefined}
                   onBulkSetSurveyNo={isSuperAdmin || isAdmin ? handleBulkSetSurveyNo : undefined}
                   onBulkSetDateSurveyed={isSuperAdmin || isAdmin ? handleBulkSetDateSurveyed : undefined}
                   onBulkSetDateApproved={isSuperAdmin || isAdmin ? handleBulkSetDateApproved : undefined}

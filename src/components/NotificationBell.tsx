@@ -161,7 +161,7 @@ import { useSidebarTheme } from "@/components/map/SidebarThemeContext";
 
 export interface ActivityLogRow {
   id: number;
-  action: "create" | "update" | "delete" | "project" | "preview" | "report";
+  action: "create" | "update" | "delete" | "project" | "preview" | "report" | "archive" | "restore";
   entity_type: string;
   entity_id: number | null;
   description: string;
@@ -221,6 +221,8 @@ const actionColorHex: Record<ActivityLogRow["action"], string> = {
   project: "#7c3aed",
   preview: "#0891b2",
   report: "#d97706",
+  archive: "#f59e0b",
+  restore: "#0d9488",
 };
 
 async function fetchTodayLogs(): Promise<ActivityLogRow[]> {
@@ -594,7 +596,9 @@ export default function NotificationBell({ compact = false, onSelectLog, refresh
                     // render as plain (non-interactive) rows instead of a
                     // dead-end button.
                     const clickable =
-                      Boolean(onSelectLog) && (log.entity_id != null || log.entity_type === "projection");
+                      Boolean(onSelectLog) &&
+                      log.action !== "archive" &&
+                      (log.entity_id != null || log.entity_type === "projection");
                     const content = (
                       <>
                         <span

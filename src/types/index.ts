@@ -45,6 +45,9 @@ export interface Lot {
   dateSurveyed: string; // "YYYY-MM-DD"
   patentNo: string;
   remarks: string;
+  applicationNumber: string;
+  serialNumber: string;
+  investigatorId: number | null;
   surveyorId: number | null;
   areaSqm: string;
   corners: Corner[];

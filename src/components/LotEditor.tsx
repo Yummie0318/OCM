@@ -32,6 +32,9 @@ export function newLot(): Lot {
     dateSurveyed: "",
     patentNo: "",
     remarks: "",
+    applicationNumber: "",
+    serialNumber: "",
+    investigatorId: null,
     surveyorId: null,
     areaSqm: "",
     corners: [newCorner("1"), newCorner("2"), newCorner("3")],
@@ -168,6 +171,7 @@ interface ProvinceOption { id: number; name: string }
 interface MunicipalityOption { id: number; name: string; type: string }
 interface BarangayOption { id: number; name: string }
 interface SurveyorOption { id: number; name: string; position: string }
+interface InvestigatorOption { id: number; name: string }
 
 interface Props {
   lots: Lot[];
@@ -192,6 +196,7 @@ function fileToBase64(file: File | Blob): Promise<{ data: string; mediaType: str
 export default function LotEditor({ lots, onChange, controlPoint }: Props) {
   const [provinces, setProvinces] = useState<ProvinceOption[]>([]);
   const [surveyors, setSurveyors] = useState<SurveyorOption[]>([]);
+  const [investigators, setInvestigators] = useState<InvestigatorOption[]>([]);
   const [importingLotId, setImportingLotId] = useState<string | null>(null);
   const [importError, setImportError] = useState<{ lotId: string; message: string } | null>(null);
   const importTargetLotId = useRef<string | null>(null);
@@ -204,6 +209,7 @@ export default function LotEditor({ lots, onChange, controlPoint }: Props) {
   useEffect(() => {
     fetch("/api/provinces").then((r) => r.json()).then(setProvinces).catch(() => setProvinces([]));
     fetch("/api/surveyors").then((r) => r.json()).then(setSurveyors).catch(() => setSurveyors([]));
+    fetch("/api/investigators").then((r) => r.json()).then(setInvestigators).catch(() => setInvestigators([]));
   }, []);
 
   // If the control point changes, re-place every lot that is in bearing mode.
@@ -327,6 +333,9 @@ export default function LotEditor({ lots, onChange, controlPoint }: Props) {
           surveyNo: prev.surveyNo,
           dateSurveyed: prev.dateSurveyed,
           patentNo: prev.patentNo,
+        applicationNumber: prev.applicationNumber,
+          serialNumber: prev.serialNumber,
+          investigatorId: prev.investigatorId,
         }
       : newLot();
 
@@ -487,6 +496,21 @@ export default function LotEditor({ lots, onChange, controlPoint }: Props) {
                       <input className={inputCls} type="text" value={lot.remarks} onChange={(e) => updateLot(lot.id, { remarks: e.target.value })} />
                     </label>
                   </div>
+                                    <div className="grid grid-cols-2 gap-2.5">
+                    <label className={labelCls}>
+                      Application No.
+                      <input className={inputCls} type="text" value={lot.applicationNumber} onChange={(e) => updateLot(lot.id, { applicationNumber: e.target.value })} />
+                    </label>
+                    <label className={labelCls}>
+                      Serial No.
+                      <input className={inputCls} type="text" value={lot.serialNumber} onChange={(e) => updateLot(lot.id, { serialNumber: e.target.value })} />
+                    </label>
+                  </div>
+                    <InvestigatorField
+                      value={lot.investigatorId}
+                      options={investigators}
+                      onChange={(investigatorId) => updateLot(lot.id, { investigatorId })}
+                    />
                 </div>
 
                 <div className="flex min-w-0 flex-col gap-1.5">
@@ -779,7 +803,7 @@ function LotLocationFields({
             onPatch({ provinceId, municipalityId: null, barangayId: null, location: buildLocationString(provinceId, null, null, [], []) });
           }}
         >
-          <option value="">Select…</option>
+          <option value="" disabled hidden>Select…</option>
           {provinces.map((p) => (
             <option key={p.id} value={p.id}>{p.name}</option>
           ))}
@@ -797,7 +821,7 @@ function LotLocationFields({
             onPatch({ municipalityId, barangayId: null, location: buildLocationString(lot.provinceId, municipalityId, null, municipalities, []) });
           }}
         >
-          <option value="">Select…</option>
+          <option value="" disabled hidden>Select…</option>
           {municipalities.map((m) => (
             <option key={m.id} value={m.id}>{m.name}</option>
           ))}
@@ -815,7 +839,7 @@ function LotLocationFields({
             onPatch({ barangayId, location: buildLocationString(lot.provinceId, lot.municipalityId, barangayId, municipalities, barangays) });
           }}
         >
-          <option value="">Select…</option>
+          <option value="" disabled hidden>Select…</option>
           {barangays.map((b) => (
             <option key={b.id} value={b.id}>{b.name}</option>
           ))}
@@ -832,5 +856,31 @@ function LotLocationFields({
         </select>
       </label>
     </div>
+  );
+}
+
+function InvestigatorField({
+  value,
+  options,
+  onChange,
+}: {
+  value: number | null;
+  options: InvestigatorOption[];
+  onChange: (id: number | null) => void;
+}) {
+  return (
+    <label className={labelCls}>
+      Name of Investigator
+      <select
+        className={inputCls}
+        value={value ?? ""}
+        onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+      >
+        <option value="" disabled hidden>Select…</option>
+        {options.map((o) => (
+          <option key={o.id} value={o.id}>{o.name}</option>
+        ))}
+      </select>
+    </label>
   );
 }

@@ -188,6 +188,7 @@ import {
   BarChart3,
   Landmark,      // <-- ADD
   TreePine,      // <-- ADD
+    Archive,
   type LucideIcon, // <-- ADD
 } from "lucide-react";
 import type { SelectionMeta, TreeNodeData, LotSearchResult } from "@/lib/geo";
@@ -587,6 +588,8 @@ export default function Sidebar({
   // To make surveyors view-only too, remove `|| userType === "surveyor"`.
   const canWrite = userType === "superadmin" || userType === "admin" || userType === "surveyor";
   const canManageUsers = userType === "superadmin" && !!onOpenUserManagement;
+  // Plain "user" accounts never see the Archive.
+  const canSeeArchive = userType === "superadmin" || userType === "admin" || userType === "surveyor";
 
   // Re-runs on mount AND whenever the parent bumps municipalitiesRefreshKey
   // (e.g. right after a lot sheet save succeeds), so newly-saved lots show
@@ -1004,6 +1007,7 @@ export default function Sidebar({
             onAutoExpandHandled={() => setPendingExpandId(null)}
             refreshKey={municipalitiesRefreshKey}
             onOpenProjection={() => setProjectionModalOpen(true)}
+            showArchive={canSeeArchive}
           />
         ) : (
           <SelectedPanel
@@ -1207,7 +1211,8 @@ function SelectedPanel({
           const isSheetFromLog = key.startsWith("sheet:");
           const isProjMuni = key.startsWith("proj:muni:");
           const isProjBrgy = key.startsWith("proj:brgy:");
-                    const isForest = key.startsWith("forest:");
+          const isForest = key.startsWith("forest:");
+          const isArchive = key.startsWith("archive:");
           return (
             <div
               key={key}
@@ -1218,7 +1223,9 @@ function SelectedPanel({
                   : `0 0 0 1px ${hairlineSoft}`,
               }}
             >
-              {isSearchResult ? (
+              {isArchive ? (
+                <Archive size={13} className="mt-0.5 flex-shrink-0 text-[var(--sb-accent)]" />
+              ) : isSearchResult ? (
                 <SearchIcon size={13} className="mt-0.5 flex-shrink-0 text-[var(--sb-accent)]" />
               ) : isSheetFromLog ? (
                 <Bell size={13} className="mt-0.5 flex-shrink-0 text-[var(--sb-accent)]" />
@@ -1518,6 +1525,7 @@ function LayersPanel({
   onAutoExpandHandled,
   refreshKey,
   onOpenProjection,
+  showArchive,
 }: {
   municipalities: TreeNodeData[] | null;
   activeSelections: Record<string, SelectionMeta>;
@@ -1528,6 +1536,7 @@ function LayersPanel({
   refreshKey?: number;
   /** Opens the bulk "Project layers" modal (see ProjectionModal.tsx). */
   onOpenProjection: () => void;
+  showArchive?: boolean;
 }) {
   return (
     <div>
@@ -1574,6 +1583,85 @@ function LayersPanel({
           />
         ))}
       </div>
+      {showArchive && (
+        <ArchiveSection activeSelections={activeSelections} onToggle={onToggle} refreshKey={refreshKey} />
+      )}
+    </div>
+  );
+}
+
+// ---------------- Archive (sits below Municipalities, separated by a divider) ----------------
+//
+// One row: check it to project EVERY archived lot on the map and in the
+// attribute table. Archived records are read-only there.
+function ArchiveSection({
+  activeSelections,
+  onToggle,
+  refreshKey,
+}: {
+  activeSelections: Record<string, SelectionMeta>;
+  onToggle: (key: string, meta: SelectionMeta | null) => void;
+  refreshKey?: number;
+}) {
+  const [summary, setSummary] = useState<{ sheets: number; lots: number } | null>(null);
+
+  useEffect(() => {
+    fetch("/api/map/archive?summary=1")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d && typeof d.sheets === "number") {
+          setSummary({ sheets: d.sheets, lots: d.lots });
+          // Nothing left in the archive: drop the stale selection so it
+          // disappears from the Selected tab, the map and the table.
+          if (d.lots === 0 && activeSelections["archive:all"]) {
+            onToggle("archive:all", null);
+          }
+        }
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshKey]);
+
+  const key = "archive:all";
+  const checked = !!activeSelections[key];
+  const empty = summary !== null && summary.lots === 0;
+
+  function toggle() {
+    if (empty && !checked) return;
+    onToggle(key, checked ? null : { query: { archived: 1 }, label: "Archive (all Archived)" });
+  }
+
+  return (
+    <div className="mt-4 pt-3" style={{ borderTop: `1px solid ${hairline}` }}>
+      <h3 className="mb-1 px-0.5 text-[10px] font-bold uppercase tracking-wide text-[var(--sb-text-muted)]">
+        Archive
+      </h3>
+      {empty && !checked ? (
+        <p className="px-1.5 py-[6px] text-[11.5px] text-[var(--sb-text-faint)]">Nothing archived yet.</p>
+      ) : (
+        <div
+          onClick={toggle}
+          className={`flex w-full cursor-pointer items-center gap-2 rounded-[9px] px-1.5 py-[6px] transition-colors duration-100 ${
+            checked ? "bg-[var(--sb-accent-bg)]" : "hover:bg-[var(--sb-hover)]"
+          }`}
+        >
+          <span onClick={(e) => e.stopPropagation()}>
+            <Checkbox checked={checked} onChange={toggle} />
+          </span>
+          <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center">
+            <Archive size={13} className={checked ? "text-[var(--sb-accent)]" : "text-[var(--sb-text-faint)]"} />
+          </span>
+          <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-[var(--sb-text)]">
+            Archived
+          </span>
+          <InfoPopover label="About the archive" title="Archive">
+            Archived records are read-only.
+          </InfoPopover>
+          <span className="flex-shrink-0 tabular-nums text-[10.5px] text-[var(--sb-text-faint)]">
+            ({summary?.sheets ?? 0})
+          </span>
+        </div>
+      )}
     </div>
   );
 }

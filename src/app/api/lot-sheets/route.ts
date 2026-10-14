@@ -43,6 +43,9 @@ interface LotInput {
   dateSurveyed?: string | null; // "YYYY-MM-DD"
   patentNo?: string | null;
   remarks?: string | null;
+  applicationNumber?: string | null;
+  serialNumber?: string | null;
+  investigatorId?: number | null;
   surveyorId?: number | null;
   areaSqm?: number | null;
   geojson?: unknown; // computed GeoJSON Feature for this lot
@@ -211,9 +214,10 @@ export async function POST(request: Request) {
           (lot_sheet_id, lot_no, owner_given_name, owner_surname,
            province_id, municipality_id, barangay_id,
            survey_no, date_surveyed, patent_no, remarks,
-           surveyor_id, area_sqm, geojson, geom)
+           surveyor_id, area_sqm, geojson,
+           application_number, serial_number, investigator_id, geom)
          VALUES (
-           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
+           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,
            CASE WHEN $14::jsonb IS NULL THEN NULL
                 ELSE ST_SetSRID(ST_GeomFromGeoJSON($14::jsonb->'geometry'), 4326)
            END
@@ -234,6 +238,9 @@ export async function POST(request: Request) {
           lot.surveyorId ?? null,
           lot.areaSqm ?? null,
           geojsonStr,
+          lot.applicationNumber?.trim() || null,
+          lot.serialNumber?.trim() || null,
+          lot.investigatorId ?? null,
         ]
       );
       insertedLots.push(lotResult.rows[0]);

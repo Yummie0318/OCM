@@ -106,7 +106,16 @@ const SPECIAL_PATENT_RE =
 // Owner + lot text only. Sheet name is deliberately NOT included.
 const LOT_TEXT_SQL = `UPPER(CONCAT_WS(' ', l.owner_given_name, l.owner_surname, l.lot_no))`;
 
+// Application No. takes priority: "RFPA-..." -> RFPA, "FPA-..." -> FPA.
+// Keep identical to lots/route.ts.
+const APP_NO_SQL = `UPPER(TRIM(l.application_number))`;
+const APP_IS_RFPA_SQL = `${APP_NO_SQL} LIKE 'RFPA-%'`;
+const APP_IS_FPA_SQL = `${APP_NO_SQL} LIKE 'FPA-%'`;
+const APP_HAS_CLASS_SQL = `(${APP_IS_RFPA_SQL} OR ${APP_IS_FPA_SQL})`;
+
 const CLASSIFICATION_CASE_SQL = `CASE
+  WHEN ${APP_IS_RFPA_SQL} THEN 'RFPA'
+  WHEN ${APP_IS_FPA_SQL} THEN 'FPA'
   WHEN ${LOT_TEXT_SQL} ~ '${NON_TITLED_RE}' THEN NULL
   WHEN ${LOT_TEXT_SQL} ~ '${SPECIAL_PATENT_RE}' THEN 'RFPA'
   WHEN get_rfpa_threshold(l.municipality_id) IS NULL THEN NULL
@@ -361,7 +370,7 @@ export async function GET(request: Request) {
     let sql: string;
     // Roads, boundary, foreshore, etc. are not titled lots, so they are
     // not counted in any facet list or count.
-    conditions.push(`NOT (${LOT_TEXT_SQL} ~ '${NON_TITLED_RE}')`);
+    conditions.push(`NOT (${LOT_TEXT_SQL} ~ '${NON_TITLED_RE}' AND NOT ${APP_HAS_CLASS_SQL})`);
     if (target === "cenros") {
       conditions.push("c.id IS NOT NULL");
       sql = `

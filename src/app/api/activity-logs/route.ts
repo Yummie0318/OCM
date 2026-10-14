@@ -27,7 +27,7 @@ function parsePositiveInt(value: string | null): number | null {
   return Number.isSafeInteger(n) && n > 0 ? n : null;
 }
 
-const VALID_ACTIONS = ["create", "update", "delete", "project", "preview", "report"];
+const VALID_ACTIONS = ["create", "update", "delete", "project", "preview", "report", "archive", "restore"];
 
 export async function GET(request: Request) {
   const cookieStore = await cookies();

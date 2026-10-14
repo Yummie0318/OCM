@@ -187,6 +187,11 @@ export default function ExportFooter({ lots, computedLots, controlPoint }: Props
         surveyNo: lot?.surveyNo ?? "",
         dateSurveyed: lot?.dateSurveyed || null,
         surveyorId: lot?.surveyorId ?? null,
+        patentNo: lot?.patentNo || null,
+        remarks: lot?.remarks || null,
+        applicationNumber: lot?.applicationNumber || null,
+        serialNumber: lot?.serialNumber || null,
+        investigatorId: lot?.investigatorId ?? null,
         areaSqm: computed.computedAreaSqm,
         geojson: computedLotToFeature(computed, lot),
       };

@@ -35,11 +35,13 @@ import {
   ShieldAlert,
   Users,
   Ruler,
+  UserCheck,
 } from "lucide-react";
 import { useSidebarTheme } from "./SidebarThemeContext";
 import { uiFont } from "./sidebarTheme";
 import { toast } from "@/components/notifications/Toaster";
 import SurveyorsPanel from "./SurveyorsPanel";
+import InvestigatorsPanel from "./InvestigatorsPanel";
 import SubDialog from "./SubDialog";
 import ConfirmDialog from "./ConfirmDialog";
 
@@ -152,7 +154,10 @@ export default function UsersModal({
   const [view, setView] = useState<View>({ kind: "list" });
   const [busyId, setBusyId] = useState<number | null>(null);
   const [copied, setCopied] = useState(false);
-  const [tab, setTab] = useState<"users" | "surveyors">("users");
+  const [tab, setTab] = useState<"users" | "surveyors" | "investigators">("users");
+  const [investigatorsBusy, setInvestigatorsBusy] = useState(false);
+  const [investigatorCount, setInvestigatorCount] = useState<number | null>(null);
+  const [investigatorEscape, setInvestigatorEscape] = useState(false);
   const [surveyorsBusy, setSurveyorsBusy] = useState(false);
   // null until the Surveyors tab has been opened once and reported its count.
   const [surveyorCount, setSurveyorCount] = useState<number | null>(null);
@@ -162,9 +167,12 @@ export default function UsersModal({
   // True while the create/edit form has a request in flight.
   const [formSaving, setFormSaving] = useState(false);
   // Blocks every way of dismissing the modal until the request finishes.
-  const locked = formSaving || busyId !== null || surveyorsBusy;
+  const locked = formSaving || busyId !== null || surveyorsBusy || investigatorsBusy;
   // Something is open on top of the main dialog.
-  const subOpen = (tab === "users" && view.kind !== "list") || surveyorEscape;
+  const subOpen =
+    (tab === "users" && view.kind !== "list") ||
+    (tab === "surveyors" && surveyorEscape) ||
+    (tab === "investigators" && investigatorEscape);
 
   useEffect(() => setMounted(true), []);
 
@@ -207,12 +215,16 @@ export default function UsersModal({
         if (!surveyorEscape) onClose();
         return;
       }
+            if (tab === "investigators") {
+        if (!investigatorEscape) onClose();
+        return;
+      }
       if (view.kind === "list") onClose();
       else setView({ kind: "list" });
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, view.kind, tab, surveyorEscape, onClose, locked]);
+  }, [open, view.kind, tab, surveyorEscape, investigatorEscape, onClose, locked]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -286,7 +298,8 @@ export default function UsersModal({
 
   if (!mounted || !open) return null;
 
-  const title = tab === "surveyors" ? "Surveyors" : "User management";
+  const title =
+    tab === "surveyors" ? "Surveyors" : tab === "investigators" ? "Investigators" : "User management";
 
   return createPortal(
     <div
@@ -314,7 +327,7 @@ export default function UsersModal({
             className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-[10px]"
             style={{ background: "var(--sb-accent-bg)", color: "var(--sb-accent-text)" }}
           >
-            {tab === "surveyors" ? <Ruler size={15} /> : <Users size={15} />}
+            {tab === "surveyors" ? <Ruler size={15} /> : tab === "investigators" ? <UserCheck size={15} /> : <Users size={15} />}
           </span>
           <div className="min-w-0 flex-1">
             <h2 className="truncate text-[15px] font-bold tracking-tight">{title}</h2>
@@ -322,8 +335,10 @@ export default function UsersModal({
               <p className="text-[11.5px] text-[var(--sb-text-faint)]">
                 {loading ? "Loading…" : `${filtered.length} of ${users.length} user${users.length === 1 ? "" : "s"}`}
               </p>
-            ) : (
+            ) : tab === "surveyors" ? (
               <p className="text-[11.5px] text-[var(--sb-text-faint)]">Shown in the Surveyor dropdown of the lot form</p>
+            ) : (
+              <p className="text-[11.5px] text-[var(--sb-text-faint)]">Shown in the Investigator dropdown of the lot form</p>
             )}
           </div>
           <IconBtn label="Close" onClick={onClose} disabled={locked}>
@@ -338,6 +353,7 @@ export default function UsersModal({
               [
                 ["users", "Users", Users, users.length],
                 ["surveyors", "Surveyors", Ruler, surveyorCount],
+                ["investigators", "Investigators", UserCheck, investigatorCount],
               ] as const
             ).map(([value, label, Icon, count]) => {
               const active = tab === value;
@@ -551,6 +567,13 @@ export default function UsersModal({
             onBusyChange={setSurveyorsBusy}
             onCountChange={setSurveyorCount}
             onEscapeCaptureChange={setSurveyorEscape}
+          />
+        )}
+        {tab === "investigators" && (
+          <InvestigatorsPanel
+            onBusyChange={setInvestigatorsBusy}
+            onCountChange={setInvestigatorCount}
+            onEscapeCaptureChange={setInvestigatorEscape}
           />
         )}
 

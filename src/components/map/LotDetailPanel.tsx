@@ -403,7 +403,13 @@ export default function LotDetailPanel({
             {/* Owner + actions */}
             <div className="flex flex-col gap-2.5 px-4 pt-3">
               <div className="text-[12.5px] text-[var(--sb-text-muted)]">{p?.owner || "Unrecorded owner"}</div>
-
+              {(p?.applicationNumber || p?.serialNumber || p?.investigator) && (
+                <div className="flex flex-col gap-0.5 text-[11.5px] text-[var(--sb-text-muted)]">
+                  {p?.applicationNumber && <span>Application No.: {p.applicationNumber}</span>}
+                  {p?.serialNumber && <span>Serial No.: {p.serialNumber}</span>}
+                  {p?.investigator && <span>Investigator: {p.investigator}</span>}
+                </div>
+              )}
               <div className="flex flex-wrap items-center gap-1.5">
                 <ActionButton
                   icon={<Eye size={12} />}

@@ -26,6 +26,8 @@ import {
   ArrowDown,
   ArrowUpDown,
   Eraser,
+  Archive,
+  RotateCcw,
 } from "lucide-react";  
 
 const COLOR_PRESETS: { label: string; value: string }[] = [
@@ -201,6 +203,8 @@ interface Props {
    onUpdateSurveyClass?: (sheetId: number, surveyClass: "admin" | "private") => Promise<void>;
   // Superadmin-only. When provided, an Edit button shows in the Actions column.
   onEditSheet?: (sheetId: number, values: SheetEditValues) => Promise<void>;
+  onArchiveSheet?: (sheetId: number) => Promise<void>;
+  onRestoreSheet?: (sheetId: number) => Promise<void>;
   onEditLot?: (lotId: string | number, values: LotEditValues) => Promise<void>;
   // Decides per record whether the Edit button shows, based on who encoded it.
   // If omitted, every record is editable (when the edit handlers exist).
@@ -241,6 +245,8 @@ interface SheetGroup {
   rfpaCount: number;
   fpaCount: number;
   hasMissingSurveyNo: boolean;
+    archived: boolean;
+      restoreId: number | null;
   lots: LotFeature[];
   totalArea: number;
     titledCount: number;
@@ -258,10 +264,24 @@ const LOT_COLUMNS = [
   "Area (sq.m.)",
   "Classification",
   "Patent No.",
+  "Application No.",
+  "Serial No.",
+  "Investigator",
   "Remarks",
 ];
 
 const NUMERIC_COLUMNS = new Set(["Area (sq.m.)"]);
+// Columns that hold title (patent) details, highlighted in the Lots table.
+const TITLE_COLUMNS = new Set(["Patent No.", "Application No.", "Serial No.", "Investigator"]);
+// Same rule as the SQL in /api/map/lots: Application No. prefix wins,
+// otherwise fall back to the server-computed classification.
+function effectiveClassification(p: any): "RFPA" | "FPA" | null {
+  const app = String(p.applicationNumber ?? "").trim().toUpperCase();
+  if (app.startsWith("RFPA-")) return "RFPA";
+  if (app.startsWith("FPA-")) return "FPA";
+  const c = String(p.classification ?? "").toUpperCase();
+  return c === "RFPA" || c === "FPA" ? c : null;
+}
 
 // Always shows exactly 2 decimals (e.g. 207.5396728515625 -> "207.54").
 // Accepts unknown because areaSqm can arrive as a number, a numeric
@@ -299,6 +319,9 @@ function matchesLotQuery(f: LotFeature, query: string): boolean {
     p.surveyor,
     p.patentNo,
     p.remarks,
+    p.applicationNumber,
+    p.serialNumber,
+    p.investigator,
     p.sheetNo,
     p.encodedBy,
   ];
@@ -573,6 +596,9 @@ export interface LotEditValues {
   areaSqm: string;
   patentNo: string;
   remarks: string;
+  applicationNumber: string;
+  serialNumber: string;
+  investigatorId: string;
 }
 
 interface EditField {
@@ -617,14 +643,26 @@ const SHEET_EDIT_FIELDS: EditField[] = [
   { name: "documentsUrl", label: "Documents link", kind: "url", placeholder: "Google Drive link (blank to remove)" },
 ];
 
-const LOT_EDIT_FIELDS: EditField[] = [
-  { name: "lotNo", label: "Lot No.", kind: "text", required: true, half: true },
-  { name: "patentNo", label: "Patent No.", kind: "text", half: true },
-  { name: "ownerGivenName", label: "Owner given name", kind: "text", half: true },
-  { name: "ownerSurname", label: "Owner surname", kind: "text", half: true },
-  { name: "areaSqm", label: "Area (sq.m.)", kind: "number", half: true },
-  { name: "remarks", label: "Remarks", kind: "textarea" },
-];
+function lotEditFields(investigators: { id: number; name: string }[]): EditField[] {
+  return [
+    { name: "lotNo", label: "Lot No.", kind: "text", required: true, half: true },
+    { name: "areaSqm", label: "Area (sq.m.)", kind: "number", half: true },
+    { name: "ownerGivenName", label: "Owner given name", kind: "text", half: true },
+    { name: "ownerSurname", label: "Owner surname", kind: "text", half: true },
+    { name: "patentNo", label: "Patent No.", kind: "text", half: true },
+    { name: "applicationNumber", label: "Application No.", kind: "text", half: true },
+    { name: "serialNumber", label: "Serial No.", kind: "text", half: true },
+    {
+      name: "investigatorId",
+      label: "Name of Investigator",
+      kind: "select",
+      half: true,
+      placeholder: "Select investigator…",
+      options: investigators.map((i) => ({ value: String(i.id), label: i.name })),
+    },
+    { name: "remarks", label: "Remarks", kind: "textarea" },
+  ];
+}
 
 // The date column can arrive as "2024-03-05T00:00:00.000Z". The table
 // displays it in UTC (see formatDate), so slicing the UTC ISO string gives
@@ -758,6 +796,18 @@ function EditModal({
                 <span className="text-[11.5px] font-semibold text-[var(--sb-text-muted)]">
                   {f.label}
                   {f.required && <span className="text-red-500"> *</span>}
+                  {f.kind === "select" && f.placeholder && values[f.name] && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        setField(f.name, "");
+                      }}
+                      className="ml-2 border-0 bg-transparent p-0 text-[10.5px] font-medium text-[var(--sb-accent-text)] hover:underline"
+                    >
+                      Clear
+                    </button>
+                  )}
                 </span>
                 {f.kind === "select" ? (
                   <select
@@ -766,6 +816,11 @@ function EditModal({
                     onChange={(e) => setField(f.name, e.target.value)}
                     className={inputCls}
                   >
+                    {f.placeholder && (
+                      <option value="" disabled hidden>
+                        {f.placeholder}
+                      </option>
+                    )}
                     {f.options?.map((o) => (
                       <option key={o.value} value={o.value}>
                         {o.label}
@@ -1441,6 +1496,8 @@ export default function AttributeTable({
   onUpdateSurveyClass,
   onEditSheet,
   onEditLot,
+  onArchiveSheet,
+  onRestoreSheet,
   canEditRecord,
   onBulkSetSurveyNo,
   onBulkSetDateSurveyed,
@@ -1464,6 +1521,58 @@ export default function AttributeTable({
     { type: "sheet"; group: SheetGroup } | { type: "lot"; feature: LotFeature } | null
   >(null);
 
+  
+  // Sheet waiting for archive confirmation (opens the dialog below).
+  const [archiveTarget, setArchiveTarget] = useState<SheetGroup | null>(null);
+  const [archiving, setArchiving] = useState(false);
+  const [archiveError, setArchiveError] = useState<string | null>(null);
+    const [investigatorOptions, setInvestigatorOptions] = useState<{ id: number; name: string }[]>([]);
+  useEffect(() => {
+    fetch("/api/investigators")
+      .then((r) => r.json())
+      .then((d) => setInvestigatorOptions(Array.isArray(d) ? d : []))
+      .catch(() => setInvestigatorOptions([]));
+  }, []);
+  // Sheet waiting for restore confirmation (opens the dialog below).
+  const [restoreTarget, setRestoreTarget] = useState<SheetGroup | null>(null);
+  const [restoring, setRestoring] = useState(false);
+  const [restoreError, setRestoreError] = useState<string | null>(null);
+
+  async function confirmArchive() {
+    if (!archiveTarget || !onArchiveSheet || archiveTarget.sheetId == null) return;
+    setArchiving(true);
+    setArchiveError(null);
+    try {
+      await onArchiveSheet(archiveTarget.sheetId);
+      toast.success("Sheet archived", {
+        description: `Sheet ${archiveTarget.sheetNo} was moved to the archive.`,
+      });
+      setArchiveTarget(null);
+    } catch (err) {
+      setArchiveError(err instanceof Error ? err.message : "Couldn't archive this sheet.");
+    } finally {
+      setArchiving(false);
+    }
+  }
+
+    async function confirmRestore() {
+    if (!restoreTarget || !onRestoreSheet || restoreTarget.restoreId == null) return;
+    setRestoring(true);
+    setRestoreError(null);
+    try {
+      await onRestoreSheet(restoreTarget.restoreId);
+      toast.success("Sheet restored", {
+        description: `Sheet ${restoreTarget.sheetNo} is back in the live records.`,
+      });
+      setRestoreTarget(null);
+    } catch (err) {
+      setRestoreError(err instanceof Error ? err.message : "Couldn't restore this sheet.");
+    } finally {
+      setRestoring(false);
+    }
+  }
+
+  
   const searchResults = useMemo(() => {
     if (!normalizedQuery) return null;
     const lots = features.filter((f) => matchesLotQuery(f, normalizedQuery));
@@ -1480,6 +1589,7 @@ export default function AttributeTable({
       const key = sheetId != null ? `id:${sheetId}` : `no:${f.properties.sheetNo ?? "unsheeted"}`;
       const area = Number(f.properties.areaSqm) || 0;
       const nonTitled = f.properties.isNonTitled === true;
+            const isArchivedLot = (f.properties as any).archived === true;
       const rawPatent = (f.properties as any).patentNo;
       const hasPatent = rawPatent != null && String(rawPatent).trim() !== "";
       const existing = map.get(key);
@@ -1488,7 +1598,7 @@ export default function AttributeTable({
         rawSurvey != null && String(rawSurvey).trim() !== "" ? String(rawSurvey).trim() : null;
       const rawDate = f.properties.dateSurveyed;
       const dateStr = rawDate != null && String(rawDate).trim() !== "" ? String(rawDate).trim() : null;
-      const cls = String((f.properties as any).classification ?? "").toUpperCase();
+      const cls = effectiveClassification(f.properties) ?? "";
       const rawApproved = f.properties.dateApproved;
       const approvedStr =
         rawApproved != null && String(rawApproved).trim() !== "" ? String(rawApproved).trim() : null;
@@ -1512,7 +1622,12 @@ export default function AttributeTable({
       } else {
         map.set(key, {
           key,
-          sheetId,
+          // Archived sheets are no longer in the live tables, so they get no
+          // sheetId. Every add / edit / archive control is gated on
+          // sheetId != null, so this alone locks them.
+          sheetId: isArchivedLot ? null : sheetId,
+          archived: isArchivedLot,
+          restoreId: isArchivedLot ? sheetId : null,
           sheetNo: f.properties.sheetNo || "—",
           planUrl: f.properties.planUrl,
           documentsUrl: (f.properties as any).documentsUrl ?? null,
@@ -1964,6 +2079,8 @@ export default function AttributeTable({
               onToggleColorSelect={toggleSheetColorSelect}
               onToggleColorSelectAll={toggleSheetColorSelectAll}
               onEditSheet={onEditSheet ? (g) => setEditTarget({ type: "sheet", group: g }) : undefined}
+              onArchiveSheet={onArchiveSheet ? (g) => setArchiveTarget(g) : undefined}
+              onRestoreSheet={onRestoreSheet ? (g) => setRestoreTarget(g) : undefined}
               canEditRecord={canEditRecord}
             />
           )}
@@ -2056,7 +2173,7 @@ export default function AttributeTable({
               subtitle={`Lot ${(f.properties as any).lotNo ?? "—"}${
                 (f.properties as any).sheetNo ? ` · Sheet ${(f.properties as any).sheetNo}` : ""
               }`}
-              fields={LOT_EDIT_FIELDS}
+              fields={lotEditFields(investigatorOptions)}
               initial={{
                 lotNo: opened.lotNo != null ? String(opened.lotNo) : "",
                 ownerGivenName: opened.ownerGivenName ?? "",
@@ -2064,12 +2181,258 @@ export default function AttributeTable({
                 areaSqm: opened.areaSqm != null && opened.areaSqm !== "" ? String(opened.areaSqm) : "",
                 patentNo: opened.patentNo ?? "",
                 remarks: opened.remarks ?? "",
+                applicationNumber: opened.applicationNumber ?? "",
+                serialNumber: opened.serialNumber ?? "",
+                investigatorId: opened.investigatorId != null ? String(opened.investigatorId) : "",
               }}
               onSave={(v) => onEditLot(f.id, v as unknown as LotEditValues)}
               onClose={() => setEditTarget(null)}
             />
           );
         })()}
+              {archiveTarget && (
+        <ArchiveSheetModal
+          group={archiveTarget}
+          saving={archiving}
+          error={archiveError}
+          onConfirm={confirmArchive}
+          onClose={() => {
+            setArchiveTarget(null);
+            setArchiveError(null);
+          }}
+        />
+      )}
+            {restoreTarget && (
+        <RestoreSheetModal
+          group={restoreTarget}
+          saving={restoring}
+          error={restoreError}
+          onConfirm={confirmRestore}
+          onClose={() => {
+            setRestoreTarget(null);
+            setRestoreError(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// Confirmation dialog shown before a lot sheet is archived.
+function ArchiveSheetModal({
+  group,
+  saving,
+  error,
+  onConfirm,
+  onClose,
+}: {
+  group: SheetGroup;
+  saving: boolean;
+  error: string | null;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape" && !saving) onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [saving, onClose]);
+
+  const stats = [
+    { label: "Lots", value: group.lots.length.toLocaleString() },
+    { label: "Total area", value: `${formatArea(group.totalArea)} sq.m.` },
+    { label: "Municipality", value: group.municipality || "—" },
+  ];
+
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-3"
+      onClick={() => !saving && onClose()}
+    >
+      <div
+        className="flex max-h-full w-full max-w-[400px] flex-col overflow-hidden rounded-[18px] text-[var(--sb-text)]"
+        style={{
+          background: "var(--sb-bg-elevated)",
+          boxShadow: "var(--sb-shadow)",
+          border: `1px solid ${HAIRLINE}`,
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex flex-col items-center px-5 pb-4 pt-6 text-center">
+          <span
+            className="flex h-11 w-11 items-center justify-center rounded-full"
+            style={{ background: "rgba(245, 158, 11, 0.14)", color: "#d97706" }}
+          >
+            <Archive size={20} />
+          </span>
+          <h2 className="mt-3 text-[15px] font-bold tracking-tight">Archive this lot sheet?</h2>
+          <p className="mt-1 text-[12px] leading-snug text-[var(--sb-text-muted)]">
+            Sheet <span className="font-semibold text-[var(--sb-text)]">{group.sheetNo}</span> will be moved to the Archive.
+          </p>
+        </div>
+
+        <div className="px-5">
+          <div className="grid grid-cols-3 gap-2">
+            {stats.map((s) => (
+              <div
+                key={s.label}
+                className="min-w-0 rounded-[10px] px-2.5 py-2"
+                style={{ background: "var(--sb-hover)" }}
+              >
+                <div className="text-[9.5px] font-bold uppercase tracking-wide text-[var(--sb-text-faint)]">
+                  {s.label}
+                </div>
+                <div className="mt-0.5 truncate text-[12px] font-semibold tabular-nums" title={s.value}>
+                  {s.value}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {error && (
+            <div
+              role="alert"
+              className="mt-3.5 rounded-[10px] border px-3 py-2 text-[12px] font-medium"
+              style={{ background: "rgba(239, 68, 68, 0.1)", borderColor: "rgba(239, 68, 68, 0.35)", color: "#ef4444" }}
+            >
+              {error}
+            </div>
+          )}
+        </div>
+
+        <div className="flex gap-2 px-5 pb-5 pt-4">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={saving}
+            className={`${btnBase} flex-1 rounded-full bg-[var(--sb-hover)] px-4 py-2 text-[12.5px] font-semibold text-[var(--sb-text)] hover:opacity-80`}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={saving}
+            className={`${btnBase} flex flex-1 items-center justify-center gap-2 rounded-full px-4 py-2 text-[12.5px] font-semibold shadow-sm hover:opacity-90`}
+            style={{ background: "var(--sb-accent)", color: "var(--sb-on-accent)" }}
+          >
+            {saving ? <Loader2 size={13} className="animate-spin" /> : <Archive size={13} />}
+            {saving ? "Archiving…" : "Archive sheet"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Confirmation dialog shown before an archived lot sheet is restored.
+function RestoreSheetModal({
+  group,
+  saving,
+  error,
+  onConfirm,
+  onClose,
+}: {
+  group: SheetGroup;
+  saving: boolean;
+  error: string | null;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape" && !saving) onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [saving, onClose]);
+
+  const stats = [
+    { label: "Lots", value: group.lots.length.toLocaleString() },
+    { label: "Total area", value: `${formatArea(group.totalArea)} sq.m.` },
+    { label: "Municipality", value: group.municipality || "—" },
+  ];
+
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-3"
+      onClick={() => !saving && onClose()}
+    >
+      <div
+        className="flex max-h-full w-full max-w-[400px] flex-col overflow-hidden rounded-[18px] text-[var(--sb-text)]"
+        style={{
+          background: "var(--sb-bg-elevated)",
+          boxShadow: "var(--sb-shadow)",
+          border: `1px solid ${HAIRLINE}`,
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex flex-col items-center px-5 pb-4 pt-6 text-center">
+          <span
+            className="flex h-11 w-11 items-center justify-center rounded-full"
+            style={{ background: "var(--sb-accent-bg)", color: "var(--sb-accent-text)" }}
+          >
+            <RotateCcw size={20} />
+          </span>
+          <h2 className="mt-3 text-[15px] font-bold tracking-tight">Restore this lot sheet?</h2>
+          <p className="mt-1 max-w-full break-words text-[12px] leading-snug text-[var(--sb-text-muted)]">
+            Sheet <span className="font-semibold text-[var(--sb-text)]">{group.sheetNo}</span> will be moved back
+            to the live records.
+          </p>
+        </div>
+
+        <div className="px-5">
+          <div className="grid grid-cols-3 gap-2">
+            {stats.map((s) => (
+              <div
+                key={s.label}
+                className="min-w-0 rounded-[10px] px-2.5 py-2"
+                style={{ background: "var(--sb-hover)" }}
+              >
+                <div className="text-[9.5px] font-bold uppercase tracking-wide text-[var(--sb-text-faint)]">
+                  {s.label}
+                </div>
+                <div className="mt-0.5 truncate text-[12px] font-semibold tabular-nums" title={s.value}>
+                  {s.value}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {error && (
+            <div
+              role="alert"
+              className="mt-3.5 rounded-[10px] border px-3 py-2 text-[12px] font-medium"
+              style={{ background: "rgba(239, 68, 68, 0.1)", borderColor: "rgba(239, 68, 68, 0.35)", color: "#ef4444" }}
+            >
+              {error}
+            </div>
+          )}
+        </div>
+
+        <div className="flex gap-2 px-5 pb-5 pt-4">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={saving}
+            className={`${btnBase} flex-1 rounded-full bg-[var(--sb-hover)] px-4 py-2 text-[12.5px] font-semibold text-[var(--sb-text)] hover:opacity-80`}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={saving}
+            className={`${btnBase} flex flex-1 items-center justify-center gap-2 rounded-full px-4 py-2 text-[12.5px] font-semibold shadow-sm hover:opacity-90`}
+            style={{ background: "var(--sb-accent)", color: "var(--sb-on-accent)" }}
+          >
+            {saving ? <Loader2 size={13} className="animate-spin" /> : <RotateCcw size={13} />}
+            {saving ? "Restoring…" : "Restore sheet"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -2086,18 +2449,29 @@ function NoSearchResults({ query }: { query: string }) {
   );
 }
 
-export function Th({ children, numeric }: { children: React.ReactNode; numeric?: boolean }) {
+export function Th({
+  children,
+  numeric,
+  highlight,
+}: {
+  children: React.ReactNode;
+  numeric?: boolean;
+  highlight?: boolean;
+}) {
   return (
     <th
       className={`sticky top-0 z-10 whitespace-nowrap px-2.5 py-[7px] font-semibold uppercase backdrop-blur ${
         numeric ? "text-right" : "text-left"
       }`}
       style={{
-        background: "color-mix(in srgb, var(--sb-hover) 92%, transparent)",
+        background: highlight
+          ? "color-mix(in srgb, var(--sb-accent) 14%, var(--sb-bg))"
+          : "color-mix(in srgb, var(--sb-hover) 92%, transparent)",
         borderBottom: `1px solid ${HAIRLINE}`,
+        boxShadow: highlight ? "inset 0 2px 0 var(--sb-accent)" : undefined,
         fontSize: "10px",
         letterSpacing: "0.05em",
-        color: "var(--sb-text-muted)",
+        color: highlight ? "var(--sb-accent-text)" : "var(--sb-text-muted)",
       }}
     >
       {children}
@@ -2201,6 +2575,8 @@ function SheetsTable({
   onToggleColorSelect,
   onToggleColorSelectAll,
   onEditSheet,
+  onArchiveSheet,
+  onRestoreSheet,
   canEditRecord,
 }: {
   groups: SheetGroup[];
@@ -2222,11 +2598,14 @@ function SheetsTable({
   onToggleColorSelect: (key: string) => void;
   onToggleColorSelectAll: () => void;
   onEditSheet?: (group: SheetGroup) => void;
+  onArchiveSheet?: (group: SheetGroup) => void;
+  onRestoreSheet?: (group: SheetGroup) => void;
   canEditRecord?: (encodedBy: string | null | undefined) => boolean;
 }) {
   const allSelected = groups.length > 0 && groups.every((g) => colorSelectedKeys.has(g.key));
 
-    const [sort, setSort] = useState<SortState>(null);
+
+  const [sort, setSort] = useState<SortState>(null);
 
   const sortedGroups = useMemo(() => {
     if (!sort) return groups;
@@ -2292,7 +2671,7 @@ function SheetsTable({
           <Th>Classification</Th>
           <Th numeric>Total Area (sq.m.)</Th>
           <Th>Encoded By</Th>
-          {(onViewSheet || onEditSheet) && <Th>Actions</Th>}
+          {(onViewSheet || onEditSheet || onArchiveSheet || onRestoreSheet) && <Th>Actions</Th>}
         </tr>
       </thead>
       <tbody className="uppercase">
@@ -2340,8 +2719,18 @@ function SheetsTable({
                   : "—"}
               </td>
               <td className="max-w-[150px] px-2.5 py-[6px] font-medium text-[var(--sb-text)]">
-                <span className="block max-w-[150px] truncate" title={g.sheetNo}>
-                  {g.sheetNo}
+                <span className="flex max-w-[150px] items-center gap-1.5">
+                  <span className="truncate" title={g.sheetNo}>
+                    {g.sheetNo}
+                  </span>
+                  {g.archived && (
+                    <span
+                      className="flex-shrink-0 rounded-full px-1.5 py-[1px] text-[9px] font-bold uppercase tracking-wide"
+                      style={{ background: "rgba(245, 158, 11, 0.16)", color: "#d97706" }}
+                    >
+                      Archived
+                    </span>
+                  )}
                 </span>
               </td>
 
@@ -2465,7 +2854,7 @@ function SheetsTable({
                   {g.encodedBy || "—"}
                 </span>
               </td>
-              {(onViewSheet || onEditSheet) && (
+                {(onViewSheet || onEditSheet || onArchiveSheet || onRestoreSheet) && (
                 <td className="px-2.5 py-[6px]" onClick={(e) => e.stopPropagation()}>
                   <div className="flex items-center gap-1.5">
                     {onViewSheet && (
@@ -2494,6 +2883,29 @@ function SheetsTable({
                           className="flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded-[7px] border-0 bg-[var(--sb-hover)] p-0 text-[var(--sb-text-muted)] transition-colors duration-100 hover:text-[var(--sb-text)]"
                         >
                           <Pencil size={12} />
+                        </button>
+                      </Tooltip>
+                    )}
+                    
+                    {onArchiveSheet && g.sheetId != null && (!canEditRecord || canEditRecord(g.encodedBy)) && (
+                      <Tooltip label="Archive sheet">
+                        <button
+                          type="button"
+                          onClick={() => onArchiveSheet(g)}
+                          className="flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded-[7px] border-0 bg-[var(--sb-hover)] p-0 text-[var(--sb-text-muted)] transition-colors duration-100 hover:text-red-500 disabled:opacity-40"
+                        >
+                          <Archive size={12} />
+                        </button>
+                      </Tooltip>
+                    )}
+                    {onRestoreSheet && g.archived && g.restoreId != null && (!canEditRecord || canEditRecord(g.encodedBy)) && (
+                      <Tooltip label="Restore sheet">
+                        <button
+                          type="button"
+                          onClick={() => onRestoreSheet(g)}
+                          className="flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded-[7px] border-0 bg-[var(--sb-hover)] p-0 text-[var(--sb-text-muted)] transition-colors duration-100 hover:text-[var(--sb-accent-text)]"
+                        >
+                          <RotateCcw size={12} />
                         </button>
                       </Tooltip>
                     )}
@@ -2537,7 +2949,10 @@ function LotsTable({
     // Show the Actions column only if at least one visible lot is editable
   // by this user (based on who encoded it).
   const canEditAny =
-    !!onEditLot && features.some((f) => !canEditRecord || canEditRecord(f.properties.encodedBy));
+    !!onEditLot &&
+    features.some(
+      (f) => !(f.properties as any).archived && (!canEditRecord || canEditRecord(f.properties.encodedBy))
+    );
 
   const rowRefs = useRef<Record<string, HTMLTableRowElement | null>>({});
 
@@ -2559,7 +2974,7 @@ function LotsTable({
         case "owner":
           return p.owner ?? null;
         case "classification":
-          return p.classification ? String(p.classification).toUpperCase() : null;
+          return effectiveClassification(p);
         default:
           return null;
       }
@@ -2606,7 +3021,7 @@ function LotsTable({
                 {h}
               </SortableTh>
             ) : (
-              <Th key={h} numeric={NUMERIC_COLUMNS.has(h)}>
+              <Th key={h} numeric={NUMERIC_COLUMNS.has(h)} highlight={TITLE_COLUMNS.has(h)}>
                 {h}
               </Th>
             )
@@ -2705,8 +3120,8 @@ function LotsTable({
               </td>
               <td className="px-2.5 py-[6px]">
                 {(() => {
-                  const c = String((f.properties as any).classification ?? "").toUpperCase();
-                  return c === "RFPA" || c === "FPA" ? (
+                  const c = effectiveClassification(f.properties);
+                  return c ? (
                     <ClassificationBadge value={c} />
                   ) : (
                     <span className="text-[var(--sb-text-muted)]">—</span>
@@ -2714,6 +3129,13 @@ function LotsTable({
                 })()}
               </td>
               <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{f.properties.patentNo}</td>
+              <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{f.properties.applicationNumber}</td>
+              <td className="px-2.5 py-[6px] text-[var(--sb-text-muted)]">{f.properties.serialNumber}</td>
+              <td className="max-w-[160px] px-2.5 py-[6px] text-[var(--sb-text-muted)]">
+                <span className="block max-w-[160px] truncate" title={f.properties.investigator ?? ""}>
+                  {f.properties.investigator}
+                </span>
+              </td>
               <td className="max-w-[160px] px-2.5 py-[6px] text-[var(--sb-text-muted)]">
                 <Tooltip label={f.properties.remarks || "—"}>
                   <span className="block max-w-[160px] cursor-help truncate">{f.properties.remarks}</span>
@@ -2721,7 +3143,7 @@ function LotsTable({
               </td>
               {canEditAny && (
                 <td className="px-2.5 py-[6px]" onClick={(e) => e.stopPropagation()}>
-                  {(!canEditRecord || canEditRecord(f.properties.encodedBy)) && (
+                  {!(f.properties as any).archived && (!canEditRecord || canEditRecord(f.properties.encodedBy)) && (
                     <Tooltip label="Edit lot">
                       <button
                         type="button"

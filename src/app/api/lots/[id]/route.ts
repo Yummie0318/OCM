@@ -62,6 +62,20 @@ export async function PATCH(
   if (has("patentNo")) setCol("patent_no", text("patentNo"));
   if (has("remarks")) setCol("remarks", text("remarks"));
 
+  if (has("applicationNumber")) setCol("application_number", text("applicationNumber"));
+  if (has("serialNumber")) setCol("serial_number", text("serialNumber"));
+  if (has("investigatorId")) {
+    const v = text("investigatorId");
+    if (v == null) {
+      setCol("investigator_id", null);
+    } else {
+      const n = Number(v);
+      if (!Number.isInteger(n) || n <= 0) {
+        return NextResponse.json({ error: "Invalid investigator." }, { status: 400 });
+      }
+      setCol("investigator_id", n);
+    }
+  }
 
   if (has("areaSqm")) {
     const v = text("areaSqm");
@@ -87,6 +101,7 @@ export async function PATCH(
       `SELECT lot_no, owner_given_name, owner_surname, survey_no,
               to_char(date_surveyed, 'YYYY-MM-DD') AS date_surveyed,
               area_sqm, patent_no, remarks, lot_sheet_id,
+              application_number, serial_number, investigator_id,
               (SELECT sheet_no FROM lot_sheets WHERE id = lots.lot_sheet_id) AS sheet_no,
               (SELECT created_by FROM lot_sheets WHERE id = lots.lot_sheet_id) AS sheet_created_by
        FROM lots WHERE id = $1`,
@@ -130,6 +145,8 @@ export async function PATCH(
        RETURNING l.id, l.lot_no, l.owner_given_name, l.owner_surname, l.survey_no,
                  to_char(l.date_surveyed, 'YYYY-MM-DD') AS date_surveyed,
                  l.area_sqm, l.patent_no, l.remarks,
+                 l.application_number, l.serial_number, l.investigator_id,
+                 (SELECT name FROM investigators WHERE id = l.investigator_id) AS investigator,
                  ${PLAN_PREFIX_SQL} AS plan_prefix,
                  ${CLASSIFICATION_SQL} AS classification`,
       values
@@ -149,6 +166,9 @@ export async function PATCH(
       ["areaSqm", "area_sqm", asNum],
       ["patentNo", "patent_no", asText],
       ["remarks", "remarks", asText],
+      ["applicationNumber", "application_number", asText],
+      ["serialNumber", "serial_number", asText],
+      ["investigatorId", "investigator_id", asNum],
     ];
     const beforeChanges: Record<string, unknown> = {};
     const afterChanges: Record<string, unknown> = {};
@@ -183,6 +203,10 @@ export async function PATCH(
         areaSqm: r.area_sqm,
         patentNo: r.patent_no,
         remarks: r.remarks,
+        applicationNumber: r.application_number,
+        serialNumber: r.serial_number,
+        investigatorId: r.investigator_id,
+        investigator: r.investigator,
         planPrefix: r.plan_prefix,
         classification: r.classification,
       },
