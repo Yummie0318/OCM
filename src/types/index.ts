@@ -43,6 +43,7 @@ export interface Lot {
   barangayId: number | null;
   surveyNo: string;
   dateSurveyed: string; // "YYYY-MM-DD"
+  dateApproved: string; // "YYYY-MM-DD"
   patentNo: string;
   remarks: string;
   applicationNumber: string;

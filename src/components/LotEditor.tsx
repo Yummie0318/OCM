@@ -30,6 +30,7 @@ export function newLot(): Lot {
     barangayId: null,
     surveyNo: "",
     dateSurveyed: "",
+    dateApproved: "",
     patentNo: "",
     remarks: "",
     applicationNumber: "",
@@ -332,6 +333,7 @@ export default function LotEditor({ lots, onChange, controlPoint }: Props) {
           surveyorId: prev.surveyorId,
           surveyNo: prev.surveyNo,
           dateSurveyed: prev.dateSurveyed,
+          dateApproved: prev.dateApproved,
           patentNo: prev.patentNo,
         applicationNumber: prev.applicationNumber,
           serialNumber: prev.serialNumber,
@@ -486,31 +488,39 @@ export default function LotEditor({ lots, onChange, controlPoint }: Props) {
                     </label>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2.5">
+                                    <div className="grid grid-cols-2 gap-2.5">
                     <label className={labelCls}>
-                      Patent No.
-                      <input className={inputCls} type="text" value={lot.patentNo} onChange={(e) => updateLot(lot.id, { patentNo: e.target.value })} placeholder="P-12345" />
+                      Date approved
+                      <input className={inputCls} type="date" value={lot.dateApproved} onChange={(e) => updateLot(lot.id, { dateApproved: e.target.value })} />
                     </label>
                     <label className={labelCls}>
                       Remarks
                       <input className={inputCls} type="text" value={lot.remarks} onChange={(e) => updateLot(lot.id, { remarks: e.target.value })} />
                     </label>
                   </div>
-                                    <div className="grid grid-cols-2 gap-2.5">
+
+                  <div className="grid grid-cols-2 gap-2.5">
                     <label className={labelCls}>
-                      Application No.
-                      <input className={inputCls} type="text" value={lot.applicationNumber} onChange={(e) => updateLot(lot.id, { applicationNumber: e.target.value })} />
+                      Patent No.
+                      <input className={inputCls} type="text" value={lot.patentNo} onChange={(e) => updateLot(lot.id, { patentNo: e.target.value })} placeholder="P-12345" />
                     </label>
                     <label className={labelCls}>
                       Serial No.
                       <input className={inputCls} type="text" value={lot.serialNumber} onChange={(e) => updateLot(lot.id, { serialNumber: e.target.value })} />
                     </label>
                   </div>
+
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <label className={labelCls}>
+                      Application No.
+                      <input className={inputCls} type="text" value={lot.applicationNumber} onChange={(e) => updateLot(lot.id, { applicationNumber: e.target.value })} />
+                    </label>
                     <InvestigatorField
                       value={lot.investigatorId}
                       options={investigators}
                       onChange={(investigatorId) => updateLot(lot.id, { investigatorId })}
                     />
+                  </div>
                 </div>
 
                 <div className="flex min-w-0 flex-col gap-1.5">

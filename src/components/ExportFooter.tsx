@@ -47,6 +47,7 @@ function computedLotToFeature(computed: ComputedLot, lot: Lot | undefined) {
       computedAreaSqm: computed.computedAreaSqm,
       surveyNo: lot?.surveyNo ?? "",
       dateSurveyed: lot?.dateSurveyed ?? "",
+            dateApproved: lot?.dateApproved ?? "",
     },
     geometry: { type: "Polygon" as const, coordinates: [computed.points.map((p) => [p.lon, p.lat])] },
   };
@@ -186,6 +187,7 @@ export default function ExportFooter({ lots, computedLots, controlPoint }: Props
         barangayId: lot?.barangayId ?? null,
         surveyNo: lot?.surveyNo ?? "",
         dateSurveyed: lot?.dateSurveyed || null,
+                dateApproved: lot?.dateApproved || null,
         surveyorId: lot?.surveyorId ?? null,
         patentNo: lot?.patentNo || null,
         remarks: lot?.remarks || null,
