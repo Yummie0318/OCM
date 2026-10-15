@@ -66,6 +66,7 @@ function getMissingFields(lot: Lot): string[] {
   if (!lot.barangayId) missing.push("Barangay");
   if (!lot.surveyorId) missing.push("Surveyor");
   if (!lot.dateSurveyed.trim()) missing.push("Date surveyed");
+    if (!lot.dateApproved.trim()) missing.push("Date approved");
   return missing;
 }
 

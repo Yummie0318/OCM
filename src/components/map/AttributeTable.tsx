@@ -225,6 +225,9 @@ interface Props {
     dateApproved: string,
     mode: "fill" | "overwrite"
   ) => Promise<number>;
+    // Reports which sheet is open (null on the sheets list / while searching)
+  // so the parent header can show a matching count.
+  onExpandedSheetChange?: (info: { sheetNo: string; lotCount: number } | null) => void;
 }
 
 interface SheetGroup {
@@ -1502,6 +1505,7 @@ export default function AttributeTable({
   onBulkSetSurveyNo,
   onBulkSetDateSurveyed,
   onBulkSetDateApproved,
+    onExpandedSheetChange,
 }: Props) {
   const { vars } = useSidebarTheme();
   const [expandedSheetKey, setExpandedSheetKey] = useState<string | null>(null);
@@ -1769,6 +1773,17 @@ const countable = !nonTitled && (f.properties as any).kind !== "forest" && cls !
 
   const expandedSheet = expandedSheetKey ? sheetGroups.find((g) => g.key === expandedSheetKey) ?? null : null;
 
+  const openSheetNo = !isSearching && expandedSheet ? expandedSheet.sheetNo : null;
+  const openSheetLots = !isSearching && expandedSheet ? expandedSheet.titledCount : 0;
+  useEffect(() => {
+    onExpandedSheetChange?.(openSheetNo !== null ? { sheetNo: openSheetNo, lotCount: openSheetLots } : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openSheetNo, openSheetLots]);
+  useEffect(() => {
+    return () => onExpandedSheetChange?.(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const summaryCount = isSearching
     ? searchResults.lots.length
     : expandedSheet
@@ -1877,21 +1892,35 @@ const countable = !nonTitled && (f.properties as any).kind !== "forest" && cls !
         hasError={hasError}
         scope={isSearching ? "matching your search" : expandedSheet ? "on this sheet" : undefined}
         leftSlot={
-          onSetLotColors ? (
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-              <SelectionToolbar
-                selectedCount={toolbarSelectedCount}
-                idleLabel={toolbarIdle}
-                onApplyColor={toolbarApply}
-                onDeselectAll={toolbarDeselect}
-                titledCount={titledIds.length}
-                titledActive={titledActive}
-                titledColor={titledColor}
-                onToggleTitled={toggleTitled}
-                onTitledColorChange={changeTitledColor}
-              />
-            </div>
-          ) : undefined
+          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
+            <button
+              type="button"
+              disabled={!(expandedSheet && !isSearching)}
+              onClick={() => setExpandedSheetKey(null)}
+              title="Back to all sheets"
+              className={`${chipBase} bg-[var(--sb-accent-bg)] text-[var(--sb-accent-text)] hover:opacity-80`}
+            >
+              <ChevronLeft size={12} strokeWidth={2.5} />
+              Back
+            </button>
+
+            {onSetLotColors && (
+              <>
+                <span className="h-4 w-px flex-shrink-0" style={{ background: HAIRLINE }} />
+                <SelectionToolbar
+                  selectedCount={toolbarSelectedCount}
+                  idleLabel={toolbarIdle}
+                  onApplyColor={toolbarApply}
+                  onDeselectAll={toolbarDeselect}
+                  titledCount={titledIds.length}
+                  titledActive={titledActive}
+                  titledColor={titledColor}
+                  onToggleTitled={toggleTitled}
+                  onTitledColorChange={changeTitledColor}
+                />
+              </>
+            )}
+          </div>
         }
         rightSlot={
           // MOBILE PASS: was a fixed w-[172px] that could overflow a narrow
@@ -1942,51 +1971,6 @@ const countable = !nonTitled && (f.properties as any).kind !== "forest" && cls !
         toolbar row) below `sm:`, and goes back to the original
         single-row layout at `sm:` and up.
       */}
-      {(isSearching || expandedSheet) && (
-        <div
-          className="flex flex-shrink-0 flex-col gap-1.5 px-3 py-2 sm:flex-row sm:items-center sm:gap-3 sm:py-1"
-          style={{ borderBottom: `1px solid ${HAIRLINE}`, background: "var(--sb-hover)" }}
-        >
-          <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
-            {!isSearching && expandedSheet ? (
-              <>
-                <button
-                  type="button"
-                  onClick={() => setExpandedSheetKey(null)}
-                  className="flex flex-shrink-0 items-center gap-0.5 rounded-full border-0 bg-transparent py-1 pl-1.5 pr-2 text-[11.5px] font-semibold text-[var(--sb-text-muted)] transition-colors hover:bg-[var(--sb-bg-elevated)] hover:text-[var(--sb-text)]"
-                >
-                  <ChevronLeft size={13} />
-                  Sheets
-                </button>
-                <span className="flex-shrink-0 text-[var(--sb-text-faint)]">/</span>
-                <span className="min-w-0 flex-1 truncate text-[11.5px] font-medium text-[var(--sb-text)]">
-                  {expandedSheet.sheetNo}
-                  {/* Municipality/province/encoder detail hidden below sm: — the
-                      breadcrumb only needs the sheet number to stay usable on a
-                      narrow screen; full detail comes back once there's room. */}
-                  {/* <span className="hidden sm:inline">
-                    {expandedSheet.municipality && ` — ${expandedSheet.municipality}, ${expandedSheet.province ?? ""}`}
-                    {expandedSheet.encodedBy && ` · Encoded by ${expandedSheet.encodedBy}`}
-                  </span> */}
-                </span>
-
-                {expandedSheet.planUrl && (
-                  <>
-                    {/* <span className="hidden flex-shrink-0 text-[var(--sb-text-faint)] sm:inline">·</span>
-                    <span className="hidden flex-shrink-0 sm:inline">
-                      <PlanLink url={expandedSheet.planUrl} label="Plan" />
-                    </span> */}
-                  </>
-                )}
-              </>
-            ) : (
-              <span className="text-[11.5px] font-medium text-[var(--sb-text-faint)]">Search results</span>
-            )}
-          </div>
-
-
-        </div>
-      )}
 
       {/*
         Sheet-level color toolbar — only shown in the plain sheets-list

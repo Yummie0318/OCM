@@ -357,6 +357,8 @@ function MapViewerPageInner() {
   const [detailPanelOpen, setDetailPanelOpen] = useState(false);
 
   const [tableFilterKey, setTableFilterKey] = useState<string | null>(null);
+  // Sheet currently opened inside AttributeTable (null = sheets list).
+  const [expandedSheetInfo, setExpandedSheetInfo] = useState<{ sheetNo: string; lotCount: number } | null>(null);
 
   const [downloadKey, setDownloadKey] = useState<string | null>(null);
 
@@ -1909,6 +1911,16 @@ function MapViewerPageInner() {
 
   const tableFilterLabel = tableFilterKey ? activeSelections[tableFilterKey]?.label ?? null : null;
 
+    // Number of distinct lot sheets in the table (the "approved plans" total).
+  const tableSheetCount = useMemo(() => {
+    const keys = new Set<string>();
+    for (const f of tableFeatures) {
+      const sid = f.properties.sheetId;
+      keys.add(sid != null ? `id:${sid}` : `no:${f.properties.sheetNo ?? "unsheeted"}`);
+    }
+    return keys.size;
+  }, [tableFeatures]);
+
   // The table area (bar + table) only exists at all once there's
   // something selected. Within that, `tableVisible` is the user's manual
   // expand/collapse choice.
@@ -2229,6 +2241,25 @@ function MapViewerPageInner() {
                   · {tableSummary.totalArea.toLocaleString(undefined, { maximumFractionDigits: 1 })} sq.m.
                 </span>
               </span>
+                            {!tableIsForest && (
+                <span
+                  className="hidden h-[20px] max-w-[340px] min-w-0 items-center gap-1.5 rounded-full px-2.5 text-[11px] font-semibold tabular-nums sm:flex"
+                  style={{ background: theme.accentBg, color: theme.accentText }}
+                >
+                  {expandedSheetInfo ? (
+                    <>
+                      <span className="truncate">Total lots on sheet {expandedSheetInfo.sheetNo} :</span>
+                      <span className="flex-shrink-0 font-bold">{expandedSheetInfo.lotCount.toLocaleString()}</span>
+                    </>
+                  ) : (
+                    <>
+                      Total approved plans :
+                      <span className="font-bold">{tableSheetCount.toLocaleString()}</span>
+                    </>
+                  )}
+                </span>
+              )}
+
               <span className="ml-auto flex-shrink-0" style={{ color: theme.textFaint }}>
                 {tableExpanded ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
               </span>
@@ -2272,6 +2303,7 @@ function MapViewerPageInner() {
                   onBulkSetSurveyNo={isSuperAdmin || isAdmin ? handleBulkSetSurveyNo : undefined}
                   onBulkSetDateSurveyed={isSuperAdmin || isAdmin ? handleBulkSetDateSurveyed : undefined}
                   onBulkSetDateApproved={isSuperAdmin || isAdmin ? handleBulkSetDateApproved : undefined}
+                  onExpandedSheetChange={setExpandedSheetInfo}
                   canEditRecord={canEditRecord}
                 />
                 )}
