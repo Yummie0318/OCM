@@ -1599,13 +1599,16 @@ export default function AttributeTable({
       const rawDate = f.properties.dateSurveyed;
       const dateStr = rawDate != null && String(rawDate).trim() !== "" ? String(rawDate).trim() : null;
       const cls = effectiveClassification(f.properties) ?? "";
+      // Single rule for "is this a real lot?" (not a road/boundary/forest).
+// Same basis as the Classification column, so Lots, Status and Classification always agree.
+const countable = !nonTitled && (f.properties as any).kind !== "forest" && cls !== "";
       const rawApproved = f.properties.dateApproved;
       const approvedStr =
         rawApproved != null && String(rawApproved).trim() !== "" ? String(rawApproved).trim() : null;
       if (existing) {
         existing.lots.push(f);
         existing.totalArea += area;
-        if (!nonTitled) {
+        if (countable) {
           existing.titledCount += 1;
           existing.titledArea += area;
           if (hasPatent) existing.patentedCount += 1;
@@ -1645,10 +1648,10 @@ export default function AttributeTable({
           hasMissingSurveyNo: !surveyStr,
           lots: [f],
           totalArea: area,
-          titledCount: nonTitled ? 0 : 1,
-          titledArea: nonTitled ? 0 : area,
-          patentedCount: !nonTitled && hasPatent ? 1 : 0,
-          unpatentedCount: !nonTitled && !hasPatent ? 1 : 0,
+          titledCount: countable ? 1 : 0,
+          titledArea: countable ? area : 0,
+          patentedCount: countable && hasPatent ? 1 : 0,
+          unpatentedCount: countable && !hasPatent ? 1 : 0,
         });
       }
     }
