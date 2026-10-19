@@ -354,6 +354,9 @@ function MapViewerPageInner() {
   // focus (e.g. right after mount).
   const [focusFeature, setFocusFeature] = useState<{ feature: LotFeature; token: number } | null>(null);
 
+    // Request to fit the map to every lot in a layer (Selected tab click).
+  const [focusLayer, setFocusLayer] = useState<{ features: LotFeature[]; token: number } | null>(null);
+
   const [detailPanelOpen, setDetailPanelOpen] = useState(false);
 
   const [tableFilterKey, setTableFilterKey] = useState<string | null>(null);
@@ -742,6 +745,16 @@ function MapViewerPageInner() {
 
   function handleDownloadLayer(key: string) {
     setDownloadKey(key);
+  }
+
+    function handleZoomLayer(key: string) {
+    const feats = layerData[key];
+    if (!feats || feats.length === 0) {
+      toast.info("Nothing to zoom to", { description: "This layer is still loading or has no lots." });
+      return;
+    }
+    setFocusLayer({ features: feats, token: Date.now() });
+    if (isMobile) setMobileOpen(false);
   }
 
   function handleSetLayerBorderColor(key: string, color: string | null) {
@@ -1984,6 +1997,7 @@ function MapViewerPageInner() {
               onCreateShapefile={() => setCreateModalOpen(true)}
               onViewLayer={handleViewLayer}
               onDownloadLayer={handleDownloadLayer}
+              onZoomLayer={handleZoomLayer}
               layerBorderColors={layerBorderColors}
               onSetLayerBorderColor={handleSetLayerBorderColor}
               activeTableKey={tableFilterKey}
@@ -2035,6 +2049,7 @@ function MapViewerPageInner() {
                 onCreateShapefile={() => setCreateModalOpen(true)}
                 onViewLayer={handleViewLayer}
                 onDownloadLayer={handleDownloadLayer}
+                onZoomLayer={handleZoomLayer}
                 layerBorderColors={layerBorderColors}
                 onSetLayerBorderColor={handleSetLayerBorderColor}
                 activeTableKey={tableFilterKey}
@@ -2069,6 +2084,7 @@ function MapViewerPageInner() {
             selectedId={selectedId}
             focusPoint={null}
             focusFeature={focusFeature}
+                        focusLayer={focusLayer}
             onPolygonClick={selectFeatureFromTable}
             onFeatureClick={openFeature}
             lotColors={lotColors}

@@ -225,6 +225,8 @@ onCreateShapefile: () => void;
    * "Sidebar reports, page decides" pattern as onViewLayer.
    */
   onDownloadLayer?: (key: string) => void;
+    /** Called when the user clicks a layer's name in the Selected tab (zoom to it). */
+  onZoomLayer?: (key: string) => void;
     /** layer key -> border hex color (owned by the map page). */
   layerBorderColors?: Record<string, string>;
   /** Set (hex) or clear (null) the polygon border color for a layer. */
@@ -565,6 +567,7 @@ export default function Sidebar({
   onCreateShapefile,
   onViewLayer,
   onDownloadLayer,
+  onZoomLayer,
   layerBorderColors,
   onSetLayerBorderColor,
   activeTableKey = null,
@@ -1017,6 +1020,7 @@ export default function Sidebar({
             onBrowse={() => setActiveTab("layers")}
             onViewLayer={onViewLayer}
             onDownloadLayer={onDownloadLayer}
+            onZoomLayer={onZoomLayer}
             layerBorderColors={layerBorderColors}
             onSetLayerBorderColor={onSetLayerBorderColor}
             activeTableKey={activeTableKey}
@@ -1143,6 +1147,7 @@ function SelectedPanel({
   onBrowse,
   onViewLayer,
   onDownloadLayer,
+  onZoomLayer,
   layerBorderColors,
   onSetLayerBorderColor,
   activeTableKey,
@@ -1153,6 +1158,7 @@ function SelectedPanel({
   onBrowse: () => void;
   onViewLayer?: (key: string) => void;
   onDownloadLayer?: (key: string) => void;
+    onZoomLayer?: (key: string) => void;
   /** layer key -> border hex color (owned by the map page). */
   layerBorderColors?: Record<string, string>;
   /** Set (hex) or clear (null) the polygon border color for a layer. */
@@ -1216,7 +1222,18 @@ function SelectedPanel({
           return (
             <div
               key={key}
-              className="flex items-start gap-2 rounded-[10px] bg-[var(--sb-accent-bg)] px-2.5 py-[7px] transition-colors duration-100"
+              role="button"
+              tabIndex={0}
+              title={`${sel.label || "Untitled"} · Click to zoom`}
+              onClick={() => onZoomLayer?.(key)}
+              onKeyDown={(e) => {
+                if (e.target !== e.currentTarget) return;
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onZoomLayer?.(key);
+                }
+              }}
+              className="flex cursor-pointer items-start gap-2 rounded-[10px] bg-[var(--sb-accent-bg)] px-2.5 py-[7px] transition-[filter,box-shadow] duration-100 hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--sb-accent)]"
               style={{
                 boxShadow: isShowing
                   ? `0 0 0 1.5px var(--sb-accent)`
@@ -1240,13 +1257,14 @@ function SelectedPanel({
                   <CalendarDays size={13} className="mt-0.5 flex-shrink-0 text-[var(--sb-accent)]" />
                 )
               )}
-              <Tooltip label={sel.label || "Untitled"} side="top">
-                <span className="min-w-0 flex-1 text-[12px] font-medium leading-snug text-[var(--sb-accent-text)]">
-                  {sel.label || "Untitled"}
-                </span>
-              </Tooltip>
-
-              <div className="ml-auto mt-0.5 flex flex-shrink-0 items-center gap-0.5">
+              <span className="min-w-0 flex-1 text-[12px] font-medium leading-snug text-[var(--sb-accent-text)]">
+                {sel.label || "Untitled"}
+              </span>
+              <div
+                className="ml-auto mt-0.5 flex flex-shrink-0 items-center gap-0.5"
+                onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => e.stopPropagation()}
+              >
               <BorderColorControl
                 value={layerBorderColors?.[key]}
                 onChange={(c) => onSetLayerBorderColor?.(key, c)}

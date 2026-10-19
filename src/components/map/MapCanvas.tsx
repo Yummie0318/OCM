@@ -177,6 +177,8 @@ interface Props {
   // is selected from AttributeTable so the map zooms to match. Optional;
   // callers that don't need this (e.g. simpler embeds) can omit it.
   focusFeature?: FocusFeatureRequest | null;
+    // Fit the map to the combined bounds of a whole layer (Selected tab click).
+  focusLayer?: { features: LotFeature[]; token: number } | null;
   // Fired EVERY time a lot polygon is clicked on the map, regardless of
   // whether the popup's "View Lot Details" button is ever pressed. Intended
   // for the parent to mirror into whatever `selectedId` state it already
@@ -569,6 +571,7 @@ export default function MapCanvas({
   selectedId,
   focusPoint,
   focusFeature,
+  focusLayer,
   onPolygonClick,
   onFeatureClick,
   lotColors,
@@ -1043,6 +1046,41 @@ export default function MapCanvas({
   }, [focusFeature]);
 
   // Swap the "basemap" raster source's tile URLs whenever the user picks a
+    // Fit the map to every lot in a layer — fired when a row's name is
+  // clicked in the sidebar's Selected tab. A fresh `token` on each click
+  // re-triggers it even for the same layer.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !loadedRef.current || !focusLayer || focusLayer.features.length === 0) return;
+
+    let minLng = Infinity,
+      minLat = Infinity,
+      maxLng = -Infinity,
+      maxLat = -Infinity;
+
+    for (const f of focusLayer.features) {
+      for (const ring of f.geometry.coordinates) {
+        for (const [lng, lat] of ring) {
+          if (lng < minLng) minLng = lng;
+          if (lng > maxLng) maxLng = lng;
+          if (lat < minLat) minLat = lat;
+          if (lat > maxLat) maxLat = lat;
+        }
+      }
+    }
+
+    if (minLng <= maxLng && minLat <= maxLat) {
+      map.fitBounds(
+        [
+          [minLng, minLat],
+          [maxLng, maxLat],
+        ],
+        { padding: 60, maxZoom: 18, duration: 600 }
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusLayer]);
+
   // different basemap. Deliberately NOT map.setStyle() — see the file-top
   // comment for why. getSource() returns undefined for a brief moment on
   // first mount before "load" fires, which loadedRef guards against; after
