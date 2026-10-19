@@ -1889,6 +1889,25 @@ function MapViewerPageInner() {
   const hasError = errorKeys.size > 0 || searchError;
   const hasTruncated = truncatedKeys.size > 0;
 
+    // Drop saved fill colors for lots that are no longer on the map, so
+  // re-projecting a layer after closing it starts from the stock colors.
+  // Skipped while a fetch is in flight so colors aren't pruned mid-load.
+  useEffect(() => {
+    if (isLoading) return;
+    const present = new Set(allFeatures.map((f) => String(f.id)));
+    setLotColors((prev) => {
+      let changed = false;
+      const next: Record<string, string> = {};
+      for (const [id, color] of Object.entries(prev)) {
+        if (present.has(id)) next[id] = color;
+        else changed = true;
+      }
+      // Return the same object when nothing was removed, so no re-render happens.
+      return changed ? next : prev;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allFeatures, isLoading]);
+  
   useEffect(() => {
     if (isLoading || selectedId == null) return;
     const stillVisible = allFeatures.some((f) => String(f.id) === String(selectedId));
